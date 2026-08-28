@@ -1,0 +1,421 @@
+//@version=5
+strategy(
+     "EMA Cut Breakout [Universal Smart Exit] - STRATEGY v3",
+     overlay=true,
+     max_lines_count=500,
+     initial_capital=100000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=10,
+     commission_type=strategy.commission.percent,
+     commission_value=0.05,
+     slippage=1,
+     process_orders_on_close=true)
+
+// ============================================================================
+// WHY v2 EXISTS
+// ============================================================================
+// v1's equity curve bled almost continuously because of two structural issues:
+//  1) The entry trigger (EMA touch + 1-bar breakout) fires on ordinary noise
+//     in choppy/ranging conditions, with no trend context at all.
+//  2) Risk was asymmetric: winners could be cut on just 2/4 weak signals
+//     (often a normal pullback), while losers were allowed to run to -2.5 ATR
+//     before the "emergency exit" - and that exit only checked once per
+//     confirmed bar, not as a real broker-side stop.
+// v2 adds (all toggleable, most default ON):
+//  - A trend filter so longs only trigger above a slower EMA, shorts below it
+//  - A volatility filter that skips dead/choppy periods (ATR below its own average)
+//  - A cooldown so the strategy can't instantly re-enter after being stopped out
+//  - A REAL hard stop placed as a stop order at entry (protects intrabar,
+//    not just on bar close), sized independently of the smart-exit score
+//  - Reduced default position size (10% of equity instead of 100%) so a
+//    losing streak doesn't compound as violently while you're testing edge
+//
+// v3 changes: on 15m NIFTY, v2's default filter thresholds combined to
+// reject EVERY signal (0 trades). v3 loosens the defaults so trades actually
+// occur on intraday index data, and adds small triangle markers below/above
+// bars showing WHY a raw signal got rejected (trend/vol/cooldown), so you can
+// see on the chart itself which filter is doing the rejecting instead of
+// guessing blind. Tune from there rather than toggling filters fully off.
+// ============================================================================
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+emaLength = input.int(20, "Entry EMA Length", minval=1, group="ENTRY")
+
+showBarColors = input.bool(true, "Color Signal Candles", group="ENTRY")
+showBreakoutLines = input.bool(true, "Show Breakout Lines", group="ENTRY")
+
+confirmOnBarClose = input.bool(true, "Confirm Signals On Bar Close (recommended)", group="ENTRY")
+
+// ---------------- NEW: TREND / VOLATILITY / COOLDOWN FILTERS ----------------
+
+useTrendFilter = input.bool(true, "Only Trade With The Trend", group="FILTERS (NEW)")
+trendEMALength = input.int(50, "Trend EMA Length", minval=10, group="FILTERS (NEW)")
+
+useVolFilter = input.bool(true, "Skip Low-Volatility/Choppy Periods", group="FILTERS (NEW)")
+volLookback = input.int(30, "ATR Average Lookback", minval=5, group="FILTERS (NEW)")
+volMultiplier = input.float(0.7, "Min ATR vs Its Average", minval=0.1, step=0.1, group="FILTERS (NEW)")
+
+useCooldown = input.bool(true, "Cooldown After An Exit", group="FILTERS (NEW)")
+cooldownBars = input.int(2, "Bars To Wait Before Re-Entry", minval=0, group="FILTERS (NEW)")
+
+// ---------------- NEW: REAL HARD STOP ----------------
+
+useHardStop = input.bool(true, "Use Real Hard Stop (protects intrabar)", group="RISK (NEW)")
+hardStopATR = input.float(1.25, "Hard Stop Distance (ATR)", minval=0.25, step=0.25, group="RISK (NEW)")
+
+// ---------------- DIRECTION FILTER ----------------
+
+allowLongs  = input.bool(true, "Allow Long Trades", group="TRADE DIRECTION")
+allowShorts = input.bool(true, "Allow Short Trades", group="TRADE DIRECTION")
+
+// ---------------- DATE RANGE ----------------
+
+useDateFilter = input.bool(false, "Limit Backtest To Date Range", group="BACKTEST RANGE")
+startDate     = input.time(timestamp("2018-01-01 00:00"), "Start", group="BACKTEST RANGE")
+endDate       = input.time(timestamp("2069-01-01 00:00"), "End", group="BACKTEST RANGE")
+inDateRange   = not useDateFilter or (time >= startDate and time <= endDate)
+
+// ---------------- EXIT ----------------
+
+enableSmartExit = input.bool(true, "Enable Smart Exit", group="EXIT")
+exitOnOpposite  = input.bool(true, "Exit On Opposite Signal", group="EXIT")
+exitConfirmations = input.int(2, "Required Exit Confirmations", minval=1, maxval=4, group="EXIT")
+
+// ---------------- EXIT INDICATORS ----------------
+
+exitEMALength = input.int(20, "Exit EMA Length", minval=1, group="EXIT INDICATORS")
+rsiLength     = input.int(14, "RSI Length", minval=1, group="EXIT INDICATORS")
+atrLength     = input.int(14, "ATR Length", minval=1, group="EXIT INDICATORS")
+
+// ---------------- PROFIT PROTECTION ----------------
+
+enableProtection = input.bool(true, "Enable Profit Protection", group="PROTECTION")
+activationATR    = input.float(1.0, "Activation ATR", minval=0.1, step=0.1, group="PROTECTION")
+trailATR         = input.float(1.25, "Trailing ATR Distance", minval=0.1, step=0.05, group="PROTECTION")
+
+// ---------------- EMERGENCY (kept as a backstop, hard stop now does the heavy lifting) ----------------
+
+enableEmergency = input.bool(true, "Enable Emergency Exit", group="RISK")
+emergencyATR    = input.float(2.5, "Emergency Loss ATR", minval=0.5, step=0.1, group="RISK")
+
+// ============================================================================
+// EMA / INDICATORS
+// ============================================================================
+
+entryEMA = ta.ema(close, emaLength)
+exitEMA  = ta.ema(close, exitEMALength)
+trendEMA = ta.ema(close, trendEMALength)
+
+plot(entryEMA, title="Entry EMA", color=color.blue, linewidth=2)
+plot(trendEMA, title="Trend EMA", color=color.purple, linewidth=1)
+
+exitRSI = ta.rsi(close, rsiLength)
+exitATR = ta.atr(atrLength)
+atrAvg  = ta.sma(exitATR, volLookback)
+
+[macdLine, macdSignal, macdHistogram] = ta.macd(close, 12, 26, 9)
+
+// ============================================================================
+// ENTRY LOGIC (EMA cut + breakout) - unchanged raw trigger
+// ============================================================================
+
+emaCuttingCandle = high[1] >= entryEMA[1] and low[1] <= entryEMA[1]
+
+bool rawBuy = false
+bool rawSell = false
+
+if emaCuttingCandle
+    bool breakHigh = high > high[1]
+    bool breakLow  = low < low[1]
+
+    if breakHigh and breakLow
+        if close > close[1]
+            rawBuy := true
+        else if close < close[1]
+            rawSell := true
+    else if breakHigh
+        rawBuy := true
+    else if breakLow
+        rawSell := true
+
+// ---- NEW: filters applied on top of the raw trigger ----
+
+bool trendOKLong  = not useTrendFilter or close > trendEMA
+bool trendOKShort = not useTrendFilter or close < trendEMA
+bool volOK        = not useVolFilter or exitATR >= atrAvg * volMultiplier
+
+var int lastExitBar = na
+bool cooldownOK = not useCooldown or na(lastExitBar) or (bar_index - lastExitBar >= cooldownBars)
+
+bool filteredBuy  = rawBuy and trendOKLong and volOK and cooldownOK
+bool filteredSell = rawSell and trendOKShort and volOK and cooldownOK
+
+// ---- NEW: diagnostics - mark rejected raw signals and why, so you can SEE
+// which filter is blocking trades instead of guessing ----
+bool rejectedByTrend = (rawBuy and not trendOKLong) or (rawSell and not trendOKShort)
+bool rejectedByVol   = (rawBuy or rawSell) and not volOK and (trendOKLong or trendOKShort)
+bool rejectedByCooldown = (rawBuy or rawSell) and volOK and not cooldownOK and ((rawBuy and trendOKLong) or (rawSell and trendOKShort))
+
+// ============================================================================
+// POSITION STATE (mirrors strategy engine)
+// ============================================================================
+
+var int positionState = 0
+var float entryPrice = na
+var float entryATR = na
+var float highestPrice = na
+var float lowestPrice = na
+
+bool exitLong = false
+bool exitShort = false
+bool newBuy = false
+bool newSell = false
+
+bool canProcess = barstate.isconfirmed or not confirmOnBarClose
+
+if canProcess
+
+    // ========================================================================
+    // LONG MANAGEMENT
+    // ========================================================================
+    if positionState == 1
+
+        highestPrice := na(highestPrice) ? high : math.max(highestPrice, high)
+
+        bool emaWeak = close < exitEMA
+        bool rsiWeak = exitRSI < 50
+        bool macdWeak = macdLine < macdSignal
+        bool structureWeak = close < low[1]
+
+        int longScore = 0
+        longScore += emaWeak ? 1 : 0
+        longScore += rsiWeak ? 1 : 0
+        longScore += macdWeak ? 1 : 0
+        longScore += structureWeak ? 1 : 0
+
+        bool smartExit = enableSmartExit and longScore >= exitConfirmations
+        bool oppositeExit = exitOnOpposite and rawSell
+
+        float longProfitATR = (close - entryPrice) / exitATR
+        bool protectionActive = enableProtection and longProfitATR >= activationATR
+        float trailingStop = highestPrice - exitATR * trailATR
+        float protectedStop = math.max(entryPrice, trailingStop)
+        bool protectionExit = protectionActive and close <= protectedStop
+
+        bool emergencyExit = enableEmergency and longProfitATR <= -emergencyATR
+
+        if smartExit or oppositeExit or protectionExit or emergencyExit
+            exitLong := true
+
+    // ========================================================================
+    // SHORT MANAGEMENT
+    // ========================================================================
+    if positionState == -1
+
+        lowestPrice := na(lowestPrice) ? low : math.min(lowestPrice, low)
+
+        bool emaWeak = close > exitEMA
+        bool rsiWeak = exitRSI > 50
+        bool macdWeak = macdLine > macdSignal
+        bool structureWeak = close > high[1]
+
+        int shortScore = 0
+        shortScore += emaWeak ? 1 : 0
+        shortScore += rsiWeak ? 1 : 0
+        shortScore += macdWeak ? 1 : 0
+        shortScore += structureWeak ? 1 : 0
+
+        bool smartExit = enableSmartExit and shortScore >= exitConfirmations
+        bool oppositeExit = exitOnOpposite and rawBuy
+
+        float shortProfitATR = (entryPrice - close) / exitATR
+        bool protectionActive = enableProtection and shortProfitATR >= activationATR
+        float trailingStop = lowestPrice + exitATR * trailATR
+        float protectedStop = math.min(entryPrice, trailingStop)
+        bool protectionExit = protectionActive and close >= protectedStop
+
+        bool emergencyExit = enableEmergency and shortProfitATR <= -emergencyATR
+
+        if smartExit or oppositeExit or protectionExit or emergencyExit
+            exitShort := true
+
+    // ========================================================================
+    // EXIT POSITION
+    // ========================================================================
+    bool exitedThisBar = false
+
+    if exitLong
+        strategy.close("Long", comment="Exit Long")
+        positionState := 0
+        entryPrice := na
+        entryATR := na
+        highestPrice := na
+        lowestPrice := na
+        exitedThisBar := true
+        lastExitBar := bar_index
+
+    if exitShort
+        strategy.close("Short", comment="Exit Short")
+        positionState := 0
+        entryPrice := na
+        entryATR := na
+        highestPrice := na
+        lowestPrice := na
+        exitedThisBar := true
+        lastExitBar := bar_index
+
+    // ========================================================================
+    // NEW ENTRY (now gated by trend/vol/cooldown filters too)
+    // ========================================================================
+    if positionState == 0 and not exitedThisBar and inDateRange
+
+        if filteredBuy and allowLongs
+            newBuy := true
+            positionState := 1
+            entryPrice := close
+            entryATR := exitATR
+            highestPrice := high
+            lowestPrice := na
+            strategy.entry("Long", strategy.long, comment="Buy")
+
+        else if filteredSell and allowShorts
+            newSell := true
+            positionState := -1
+            entryPrice := close
+            entryATR := exitATR
+            lowestPrice := low
+            highestPrice := na
+            strategy.entry("Short", strategy.short, comment="Sell")
+
+// ============================================================================
+// NEW: REAL HARD STOP - placed every bar the position is open so it protects
+// intrabar (a real stop order), independent of the once-per-bar smart-exit
+// checks above. Uses the ATR measured AT ENTRY so the stop distance doesn't
+// drift with current volatility.
+// ============================================================================
+
+if useHardStop and strategy.position_size > 0 and not na(entryPrice) and not na(entryATR)
+    strategy.exit("Long HStop", from_entry="Long", stop=entryPrice - hardStopATR * entryATR)
+
+if useHardStop and strategy.position_size < 0 and not na(entryPrice) and not na(entryATR)
+    strategy.exit("Short HStop", from_entry="Short", stop=entryPrice + hardStopATR * entryATR)
+
+// ============================================================================
+// PLOTS / SIGNALS
+// ============================================================================
+
+plotshape(newBuy, title="BUY", style=shape.labelup, location=location.belowbar,
+     color=color.green, text="BUY", textcolor=color.white, size=size.normal)
+
+plotshape(newSell, title="SELL", style=shape.labeldown, location=location.abovebar,
+     color=color.red, text="SELL", textcolor=color.white, size=size.normal)
+
+plotshape(exitLong, title="EXIT LONG", style=shape.labeldown, location=location.abovebar,
+     color=color.orange, text="EXIT", textcolor=color.white, size=size.normal)
+
+plotshape(exitShort, title="EXIT SHORT", style=shape.labelup, location=location.belowbar,
+     color=color.orange, text="EXIT", textcolor=color.white, size=size.normal)
+
+plot(positionState != 0 ? entryPrice : na, title="Entry Price",
+     color=color.gray, linewidth=1, style=plot.style_linebr)
+
+// ---- NEW: rejection diagnostics (small triangles, tiny, non-intrusive) ----
+plotchar(rejectedByTrend, title="Rejected: Trend", char="T", location=location.belowbar, color=color.gray, size=size.tiny)
+plotchar(rejectedByVol, title="Rejected: Volatility", char="V", location=location.belowbar, color=color.gray, size=size.tiny)
+plotchar(rejectedByCooldown, title="Rejected: Cooldown", char="C", location=location.belowbar, color=color.gray, size=size.tiny)
+
+float longProtection = na
+if positionState == 1 and enableProtection
+    float currentProfitATR = (close - entryPrice) / exitATR
+    if currentProfitATR >= activationATR
+        longProtection := math.max(entryPrice, highestPrice - exitATR * trailATR)
+
+float shortProtection = na
+if positionState == -1 and enableProtection
+    float currentProfitATR = (entryPrice - close) / exitATR
+    if currentProfitATR >= activationATR
+        shortProtection := math.min(entryPrice, lowestPrice + exitATR * trailATR)
+
+plot(longProtection, title="Long Protection", color=color.orange, linewidth=2, style=plot.style_linebr)
+plot(shortProtection, title="Short Protection", color=color.orange, linewidth=2, style=plot.style_linebr)
+
+if newBuy and showBreakoutLines
+    line.new(bar_index[1], high[1], bar_index, high[1], color=color.green, width=2, style=line.style_dashed)
+
+if newSell and showBreakoutLines
+    line.new(bar_index[1], low[1], bar_index, low[1], color=color.red, width=2, style=line.style_dashed)
+
+barcolor(
+     showBarColors and newBuy ? color.lime :
+     showBarColors and newSell ? color.red :
+     exitLong or exitShort ? color.orange :
+     na)
+
+// ============================================================================
+// DASHBOARD
+// ============================================================================
+
+var table dashboard = table.new(position.top_right, 2, 12)
+
+int dashboardExitScore = 0
+
+if positionState == 1
+    dashboardExitScore += close < exitEMA ? 1 : 0
+    dashboardExitScore += exitRSI < 50 ? 1 : 0
+    dashboardExitScore += macdLine < macdSignal ? 1 : 0
+    dashboardExitScore += close < low[1] ? 1 : 0
+
+if positionState == -1
+    dashboardExitScore += close > exitEMA ? 1 : 0
+    dashboardExitScore += exitRSI > 50 ? 1 : 0
+    dashboardExitScore += macdLine > macdSignal ? 1 : 0
+    dashboardExitScore += close > high[1] ? 1 : 0
+
+if barstate.islast
+
+    table.cell(dashboard, 0, 0, "POSITION")
+    table.cell(dashboard, 1, 0, positionState == 1 ? "LONG" : positionState == -1 ? "SHORT" : "FLAT")
+
+    table.cell(dashboard, 0, 1, "ENTRY")
+    table.cell(dashboard, 1, 1, na(entryPrice) ? "-" : str.tostring(entryPrice, "#.##"))
+
+    table.cell(dashboard, 0, 2, "RSI")
+    table.cell(dashboard, 1, 2, str.tostring(exitRSI, "#.##"))
+
+    table.cell(dashboard, 0, 3, "ATR")
+    table.cell(dashboard, 1, 3, str.tostring(exitATR, "#.##"))
+
+    table.cell(dashboard, 0, 4, "EXIT SCORE")
+    table.cell(dashboard, 1, 4, str.tostring(dashboardExitScore) + "/4")
+
+    table.cell(dashboard, 0, 5, "TREND OK")
+    table.cell(dashboard, 1, 5, trendOKLong ? "LONG" : trendOKShort ? "SHORT" : "NONE")
+
+    table.cell(dashboard, 0, 6, "VOL OK")
+    table.cell(dashboard, 1, 6, volOK ? "YES" : "NO (choppy)")
+
+    table.cell(dashboard, 0, 7, "SMART EXIT")
+    table.cell(dashboard, 1, 7, enableSmartExit ? "ON" : "OFF")
+
+    table.cell(dashboard, 0, 8, "NET PROFIT")
+    table.cell(dashboard, 1, 8, str.tostring(strategy.netprofit, "#.##"))
+
+    table.cell(dashboard, 0, 9, "TOTAL TRADES")
+    table.cell(dashboard, 1, 9, str.tostring(strategy.closedtrades))
+
+    table.cell(dashboard, 0, 10, "LAST REJECT")
+    table.cell(dashboard, 1, 10,
+         rejectedByTrend ? "TREND" :
+         rejectedByVol ? "VOLATILITY" :
+         rejectedByCooldown ? "COOLDOWN" :
+         "-")
+
+    table.cell(dashboard, 0, 11, "STATUS")
+    table.cell(dashboard, 1, 11,
+         exitLong or exitShort ? "EXIT" :
+         positionState == 1 ? "HOLD LONG" :
+         positionState == -1 ? "HOLD SHORT" :
+         "WAIT")

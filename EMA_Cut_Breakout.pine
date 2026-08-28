@@ -1,0 +1,64 @@
+//@version=5
+indicator("EMA Cut Breakout Strategy [Enhanced UI]", overlay=true)
+
+// =========================================================================
+// 1. USER INPUTS
+// =========================================================================
+emaLength = input.int(20, title="EMA Length", minval=1, group="Indicator Settings")
+showBarColors = input.bool(true, title="Color Signal Candles?", group="UI Settings")
+
+// =========================================================================
+// 2. CALCULATIONS
+// =========================================================================
+emaValue = ta.ema(close, emaLength)
+plot(emaValue, color=color.new(color.blue, 0), linewidth=2, title="EMA")
+
+// Define the "EMA Cutting Candle" (Step 1)
+emaCuttingCandle = high[1] >= emaValue[1] and low[1] <= emaValue[1]
+
+// =========================================================================
+// 3. SIGNAL LOGIC (Step 2)
+// =========================================================================
+var bool buySignal = false
+var bool sellSignal = false
+
+// Reset signals every bar
+buySignal := false
+sellSignal := false
+
+if emaCuttingCandle
+    breakHigh = high > high[1]
+    breakLow  = low < low[1]
+    
+    if breakHigh and breakLow
+        if close > close[1]
+            buySignal := true
+        else if close < close[1]
+            sellSignal := true
+    else if breakHigh
+        buySignal := true
+    else if breakLow
+        sellSignal := true
+
+// =========================================================================
+// 4. ENHANCED UI & PLOTTING
+// =========================================================================
+
+// UI Enhancement 1: Solid Label Badges (Looks much better than tiny arrows)
+plotshape(buySignal, title="Buy Badge", style=shape.labelup, location=location.belowbar, color=color.new(color.green, 0), size=size.normal, text="BUY", textcolor=color.white)
+plotshape(sellSignal, title="Sell Badge", style=shape.labeldown, location=location.abovebar, color=color.new(color.red, 0), size=size.normal, text="SELL", textcolor=color.white)
+
+// UI Enhancement 2: Color the breakout candle brightly so it stands out
+barcolor(showBarColors and buySignal ? color.lime : showBarColors and sellSignal ? color.red : na, title="Signal Bar Color")
+
+// UI Enhancement 3: Draw a dashed line showing the exact breakout level from Step 1
+if buySignal
+    line.new(x1=bar_index[1], y1=high[1], x2=bar_index, y2=high[1], color=color.new(color.green, 0), width=2, style=line.style_dashed)
+if sellSignal
+    line.new(x1=bar_index[1], y1=low[1], x2=bar_index, y2=low[1], color=color.new(color.red, 0), width=2, style=line.style_dashed)
+
+// =========================================================================
+// 5. ALERTS
+// =========================================================================
+alertcondition(buySignal, title="Buy Alert", message="Buy Signal Triggered: EMA Cut Breakout")
+alertcondition(sellSignal, title="Sell Alert", message="Sell Signal Triggered: EMA Cut Breakout")

@@ -1,0 +1,24 @@
+services:
+  # Webhook Receiver Service (FastAPI for TradingView alerts)
+  - type: web
+    name: delta-trading-bot-webhook
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn bot.webhook_server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DELTA_ENVIRONMENT
+        sync: false
+      - key: DELTA_API_KEY
+        sync: false
+      - key: DELTA_API_SECRET
+        sync: false
+      - key: WEBHOOK_PASSPHRASE
+        sync: false
+      - key: TRADING_SYMBOL
+        value: BTCUSD
+      - key: ORDER_SIZE
+        value: "1"
+      - key: LEVERAGE
+        value: "10"

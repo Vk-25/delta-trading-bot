@@ -1,0 +1,233 @@
+//@version=6
+indicator("EMA Cut Breakout [Universal Smart Exit] - DELTA BOT", overlay=true, max_lines_count=500)
+
+// ============================================================================
+// INPUTS & WEBHOOK SETTINGS
+// ============================================================================
+
+webhookPassphrase = input.string("supersecretpassphrase123", "Webhook Passphrase (match .env)", group="BOT AUTOMATION")
+orderSize = input.int(1, "Order Size (Contracts)", minval=1, group="BOT AUTOMATION")
+
+emaLength = input.int(20, "Entry EMA Length", minval=1, group="ENTRY")
+
+showBarColors = input.bool(true, "Color Signal Candles", group="ENTRY")
+showBreakoutLines = input.bool(true, "Show Breakout Lines", group="ENTRY")
+
+confirmOnBarClose = input.bool(true, "Confirm Signals On Bar Close (recommended for live markets)", group="ENTRY")
+
+// ---------------- EXIT ----------------
+
+enableSmartExit = input.bool(true, "Enable Smart Exit", group="EXIT")
+exitOnOpposite = input.bool(true, "Exit On Opposite Signal", group="EXIT")
+exitConfirmations = input.int(2, "Required Exit Confirmations", minval=1, maxval=4, group="EXIT")
+
+// ---------------- EXIT INDICATORS ----------------
+
+exitEMALength = input.int(20, "Exit EMA Length", minval=1, group="EXIT INDICATORS")
+rsiLength = input.int(14, "RSI Length", minval=1, group="EXIT INDICATORS")
+atrLength = input.int(14, "ATR Length", minval=1, group="EXIT INDICATORS")
+
+// ---------------- PROFIT PROTECTION ----------------
+
+enableProtection = input.bool(true, "Enable Profit Protection", group="PROTECTION")
+activationATR = input.float(1.5, "Activation ATR", minval=0.1, step=0.1, group="PROTECTION")
+trailATR = input.float(1.25, "Trailing ATR Distance", minval=0.1, step=0.05, group="PROTECTION")
+
+// ---------------- EMERGENCY ----------------
+
+enableEmergency = input.bool(true, "Enable Emergency Exit", group="RISK")
+emergencyATR = input.float(2.5, "Emergency Loss ATR", minval=0.5, step=0.1, group="RISK")
+
+// ============================================================================
+// EMA & INDICATORS
+// ============================================================================
+
+entryEMA = ta.ema(close, emaLength)
+exitEMA = ta.ema(close, exitEMALength)
+exitRSI = ta.rsi(close, rsiLength)
+exitATR = ta.atr(atrLength)
+[macdLine, macdSignal, macdHistogram] = ta.macd(close, 12, 26, 9)
+
+plot(entryEMA, title="Entry EMA", color=color.blue, linewidth=2)
+
+// ============================================================================
+// ENTRY LOGIC
+// ============================================================================
+
+emaCuttingCandle = high[1] >= entryEMA[1] and low[1] <= entryEMA[1]
+
+bool rawBuy = false
+bool rawSell = false
+
+if emaCuttingCandle
+    bool breakHigh = high > high[1]
+    bool breakLow = low < low[1]
+
+    if breakHigh and breakLow
+        if close > close[1]
+            rawBuy := true
+        else if close < close[1]
+            rawSell := true
+    else if breakHigh
+        rawBuy := true
+    else if breakLow
+        rawSell := true
+
+// ============================================================================
+// POSITION STATE
+// ============================================================================
+
+var int positionState = 0
+var float entryPrice = na
+var float highestPrice = na
+var float lowestPrice = na
+var float longTrailStop = na
+var float shortTrailStop = na
+
+bool exitLong = false
+bool exitShort = false
+bool newBuy = false
+bool newSell = false
+
+bool canProcess = barstate.isconfirmed or not confirmOnBarClose
+
+if canProcess
+    // ---------------- LONG MANAGEMENT ----------------
+    if positionState == 1
+        if na(highestPrice)
+            highestPrice := high
+        else
+            highestPrice := math.max(highestPrice, high)
+
+        bool emaWeak = close < exitEMA
+        bool rsiWeak = exitRSI < 50
+        bool macdWeak = macdLine < macdSignal
+        bool structureWeak = close < low[1]
+
+        int longScore = (emaWeak ? 1 : 0) + (rsiWeak ? 1 : 0) + (macdWeak ? 1 : 0) + (structureWeak ? 1 : 0)
+        bool smartExit = enableSmartExit and longScore >= exitConfirmations
+        bool oppositeExit = exitOnOpposite and rawSell
+
+        float longProfitATR = (close - entryPrice) / exitATR
+        bool protectionActive = enableProtection and longProfitATR >= activationATR
+        
+        float longCandidateStop = math.max(entryPrice, highestPrice - exitATR * trailATR)
+        if protectionActive
+            if na(longTrailStop)
+                longTrailStop := longCandidateStop
+            else
+                longTrailStop := math.max(longTrailStop, longCandidateStop)
+
+        bool protectionExit = protectionActive and not na(longTrailStop) and close <= longTrailStop
+        bool emergencyExit = enableEmergency and longProfitATR <= -emergencyATR
+
+        if smartExit or oppositeExit or protectionExit or emergencyExit
+            exitLong := true
+
+    // ---------------- SHORT MANAGEMENT ----------------
+    if positionState == -1
+        if na(lowestPrice)
+            lowestPrice := low
+        else
+            lowestPrice := math.min(lowestPrice, low)
+
+        bool emaWeak = close > exitEMA
+        bool rsiWeak = exitRSI > 50
+        bool macdWeak = macdLine > macdSignal
+        bool structureWeak = close > high[1]
+
+        int shortScore = (emaWeak ? 1 : 0) + (rsiWeak ? 1 : 0) + (macdWeak ? 1 : 0) + (structureWeak ? 1 : 0)
+        bool smartExit = enableSmartExit and shortScore >= exitConfirmations
+        bool oppositeExit = exitOnOpposite and rawBuy
+
+        float shortProfitATR = (entryPrice - close) / exitATR
+        bool protectionActive = enableProtection and shortProfitATR >= activationATR
+        
+        float shortCandidateStop = math.min(entryPrice, lowestPrice + exitATR * trailATR)
+        if protectionActive
+            if na(shortTrailStop)
+                shortTrailStop := shortCandidateStop
+            else
+                shortTrailStop := math.min(shortTrailStop, shortCandidateStop)
+
+        bool protectionExit = protectionActive and not na(shortTrailStop) and close >= shortTrailStop
+        bool emergencyExit = enableEmergency and shortProfitATR <= -emergencyATR
+
+        if smartExit or oppositeExit or protectionExit or emergencyExit
+            exitShort := true
+
+    // ---------------- EXIT EXECUTION ----------------
+    bool exitedThisBar = false
+
+    if exitLong
+        positionState := 0
+        entryPrice := na
+        highestPrice := na
+        lowestPrice := na
+        longTrailStop := na
+        shortTrailStop := na
+        exitedThisBar := true
+
+    if exitShort
+        positionState := 0
+        entryPrice := na
+        highestPrice := na
+        lowestPrice := na
+        longTrailStop := na
+        shortTrailStop := na
+        exitedThisBar := true
+
+    // ---------------- NEW ENTRY ----------------
+    if positionState == 0 and not exitedThisBar
+        if rawBuy
+            newBuy := true
+            positionState := 1
+            entryPrice := close
+            highestPrice := high
+            lowestPrice := na
+            longTrailStop := na
+            shortTrailStop := na
+        else if rawSell
+            newSell := true
+            positionState := -1
+            entryPrice := close
+            lowestPrice := low
+            highestPrice := na
+            longTrailStop := na
+            shortTrailStop := na
+
+// ============================================================================
+// PLOTS
+// ============================================================================
+
+plotshape(newBuy, title="BUY", style=shape.labelup, location=location.belowbar, color=color.green, text="BUY", textcolor=color.white, size=size.normal)
+plotshape(newSell, title="SELL", style=shape.labeldown, location=location.abovebar, color=color.red, text="SELL", textcolor=color.white, size=size.normal)
+plotshape(exitLong, title="EXIT LONG", style=shape.labeldown, location=location.abovebar, color=color.orange, text="EXIT", textcolor=color.white, size=size.normal)
+plotshape(exitShort, title="EXIT SHORT", style=shape.labelup, location=location.belowbar, color=color.orange, text="EXIT", textcolor=color.white, size=size.normal)
+
+// ============================================================================
+// WEBHOOK ALERTS (JSON FORMATTED FOR DELTA EXCHANGE BOT)
+// ============================================================================
+
+buyAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"BUY","symbol":"' + syminfo.ticker + '","size":' + str.tostring(orderSize) + ',"price":' + str.tostring(close) + '}'
+sellAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"SELL","symbol":"' + syminfo.ticker + '","size":' + str.tostring(orderSize) + ',"price":' + str.tostring(close) + '}'
+exitLongAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"EXIT_LONG","symbol":"' + syminfo.ticker + '","price":' + str.tostring(close) + '}'
+exitShortAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"EXIT_SHORT","symbol":"' + syminfo.ticker + '","price":' + str.tostring(close) + '}'
+
+if newBuy and canProcess
+    alert(buyAlertMsg, alert.freq_once_per_bar_close)
+
+if newSell and canProcess
+    alert(sellAlertMsg, alert.freq_once_per_bar_close)
+
+if exitLong and canProcess
+    alert(exitLongAlertMsg, alert.freq_once_per_bar_close)
+
+if exitShort and canProcess
+    alert(exitShortAlertMsg, alert.freq_once_per_bar_close)
+
+// Alertcondition declarations for manual alert configuration
+alertcondition(newBuy, title="DELTA BUY Alert", message='{"passphrase":"YOUR_PASSPHRASE","action":"BUY","symbol":"{{ticker}}","price":{{close}}}')
+alertcondition(newSell, title="DELTA SELL Alert", message='{"passphrase":"YOUR_PASSPHRASE","action":"SELL","symbol":"{{ticker}}","price":{{close}}}')
+alertcondition(exitLong, title="DELTA EXIT LONG Alert", message='{"passphrase":"YOUR_PASSPHRASE","action":"EXIT_LONG","symbol":"{{ticker}}","price":{{close}}}')
+alertcondition(exitShort, title="DELTA EXIT SHORT Alert", message='{"passphrase":"YOUR_PASSPHRASE","action":"EXIT_SHORT","symbol":"{{ticker}}","price":{{close}}}')
