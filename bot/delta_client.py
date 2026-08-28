@@ -29,6 +29,13 @@ class DeltaExchangeClient:
                 "https": config.STATIC_PROXY_URL
             })
             logger.info(f"Using outbound proxy for Delta Exchange: {config.STATIC_PROXY_URL}")
+            
+        try:
+            outbound_ip = requests.get("https://api.ipify.org", timeout=5).text.strip()
+            logger.info(f"===> Bot Outbound Public IP: {outbound_ip} (Whitelist this IP in Delta Exchange)")
+        except Exception:
+            pass
+
         self._product_cache: Dict[str, Dict[str, Any]] = {}
         self._product_id_map: Dict[int, str] = {}
         self._products_cached_at: float = 0
@@ -181,10 +188,12 @@ class DeltaExchangeClient:
             return {"success": False, "error": f"Unknown product symbol: {symbol}"}
 
         payload = {
-            "product_id": product_id,
             "leverage": str(leverage)
         }
-        res = self._request("POST", "/v2/orders/leverage", payload=payload)
+        res = self._request("POST", f"/v2/products/{product_id}/orders/leverage", payload=payload)
+        if not res.get("success"):
+            # Fallback to alternate endpoint if necessary
+            res = self._request("POST", "/v2/orders/leverage", payload={"product_id": product_id, "leverage": str(leverage)})
         logger.info(f"Set leverage for {symbol} (product_id={product_id}) to {leverage}x: {res.get('success', False)}")
         return res
 
