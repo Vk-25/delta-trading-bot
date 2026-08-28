@@ -50,6 +50,7 @@ class StandaloneBot:
             enable_protection=config.ENABLE_PROTECTION,
             activation_atr=config.ACTIVATION_ATR,
             trail_atr=config.TRAIL_ATR,
+            take_profit_atr=config.TAKE_PROFIT_ATR,
             enable_emergency=config.ENABLE_EMERGENCY,
             emergency_atr=config.EMERGENCY_ATR
         )
@@ -79,61 +80,77 @@ class StandaloneBot:
         return df
 
     def execute_signal(self, signal: SignalResult):
-        """Dispatches orders to Delta Exchange based on strategy signal."""
+        """Dispatches orders to Delta Exchange based on signal action."""
         action = signal.action
-        if action == "NONE":
-            return
+        logger.info(f"Executing Strategy Signal: [{action}] | Reason: {signal.reason} | Metrics: {signal.metrics}")
 
-        logger.info(f"Executing Strategy Signal: [{action}] | Reason: {signal.reason} | Price: {signal.price}")
-
-        # Check existing position on exchange
-        existing_pos = self.client.get_position_for_symbol(self.symbol)
-        existing_size = float(existing_pos.get("size", 0)) if existing_pos else 0
+        pos = self.client.get_position_for_symbol(self.symbol)
+        existing_size = float(pos.get("size", 0)) if pos else 0
 
         if action == "BUY":
             if existing_size < 0:
-                logger.info(f"Closing existing SHORT position ({existing_size})...")
+                logger.info(f"Closing existing SHORT position ({existing_size}) before BUY...")
                 self.client.close_position(self.symbol)
 
             logger.info(f"Placing BUY order for {config.ORDER_SIZE} contracts on {self.symbol}...")
-            self.client.place_order(
+            res = self.client.place_order(
                 symbol=self.symbol,
                 size=config.ORDER_SIZE,
                 side="buy",
                 order_type=config.ORDER_TYPE
             )
+            # Sync strategy state with entry price
+            entry_p = float(res.get("result", {}).get("avg_fill_price") or signal.metrics.get("current_price") or 0)
+            if entry_p > 0:
+                self.strategy.sync_position(config.ORDER_SIZE, entry_p)
 
         elif action == "SELL":
             if existing_size > 0:
-                logger.info(f"Closing existing LONG position ({existing_size})...")
+                logger.info(f"Closing existing LONG position ({existing_size}) before SELL...")
                 self.client.close_position(self.symbol)
 
             logger.info(f"Placing SELL order for {config.ORDER_SIZE} contracts on {self.symbol}...")
-            self.client.place_order(
+            res = self.client.place_order(
                 symbol=self.symbol,
                 size=config.ORDER_SIZE,
                 side="sell",
                 order_type=config.ORDER_TYPE
             )
+            entry_p = float(res.get("result", {}).get("avg_fill_price") or signal.metrics.get("current_price") or 0)
+            if entry_p > 0:
+                self.strategy.sync_position(-config.ORDER_SIZE, entry_p)
 
         elif action == "EXIT_LONG":
             if existing_size > 0:
                 logger.info(f"Exiting LONG position on {self.symbol}...")
                 self.client.close_position(self.symbol)
+                self.strategy.reset_state()
 
         elif action == "EXIT_SHORT":
             if existing_size < 0:
                 logger.info(f"Exiting SHORT position on {self.symbol}...")
                 self.client.close_position(self.symbol)
+                self.strategy.reset_state()
 
     def run_cycle(self):
-        """Runs a single evaluation cycle."""
+        """Runs a single evaluation cycle with real-time profit protection & closed-bar entries."""
         df = self.fetch_ohlcv_dataframe()
         if df is None or len(df) < 30:
             return
 
-        # Note: In live markets, the last candle (index -1) is forming/unconfirmed.
-        # The confirmed candle is index -2.
+        # 1. REAL-TIME INTRA-CANDLE EXIT CHECK (Runs every 1-3 seconds without waiting for candle close)
+        if config.ENABLE_INTRA_CANDLE_EXIT and self.strategy.position_state != 0:
+            live_price = float(df["close"].iloc[-1])
+            atr_series = self.strategy.calculate_atr(df, length=config.ATR_LENGTH)
+            latest_atr = float(atr_series.iloc[-1]) if not atr_series.empty else 0
+
+            rt_signal = self.strategy.check_realtime_exit(live_price, latest_atr)
+            if rt_signal and rt_signal.action != "NONE":
+                logger.info(f"⚡ [REAL-TIME INTRA-CANDLE PROFIT LOCK] {rt_signal.action} -> {rt_signal.reason} (Price: {live_price:.2f})")
+                self.execute_signal(rt_signal)
+                return
+
+        # 2. CONFIRMED CANDLE CLOSE STRATEGY EVALUATION (Runs on every completed bar)
         confirmed_df = df.iloc[:-1].copy()
         latest_timestamp = int(confirmed_df["timestamp"].iloc[-1].timestamp())
 

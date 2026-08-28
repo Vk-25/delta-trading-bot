@@ -31,10 +31,11 @@ class StrategyEngine:
         exit_on_opposite: bool = True,
         exit_confirmations: int = 2,
         enable_protection: bool = True,
-        activation_atr: float = 1.0,
-        trail_atr: float = 1.25,
+        activation_atr: float = 0.8,
+        trail_atr: float = 0.6,
+        take_profit_atr: float = 0.0,
         enable_emergency: bool = True,
-        emergency_atr: float = 2.5
+        emergency_atr: float = 2.0
     ):
         self.entry_ema_length = entry_ema_length
         self.exit_ema_length = exit_ema_length
@@ -46,6 +47,7 @@ class StrategyEngine:
         self.enable_protection = enable_protection
         self.activation_atr = activation_atr
         self.trail_atr = trail_atr
+        self.take_profit_atr = take_profit_atr
         self.enable_emergency = enable_emergency
         self.emergency_atr = emergency_atr
         
@@ -65,6 +67,113 @@ class StrategyEngine:
         self.lowest_price = None
         self.long_trail_stop = None
         self.short_trail_stop = None
+
+    def sync_position(self, current_size: float, entry_price: Optional[float] = None):
+        """Syncs internal state with actual exchange position."""
+        if current_size > 0:
+            if self.position_state != 1:
+                self.position_state = 1
+                self.entry_price = entry_price or self.entry_price
+                self.highest_price = self.entry_price
+                self.long_trail_stop = None
+        elif current_size < 0:
+            if self.position_state != -1:
+                self.position_state = -1
+                self.entry_price = entry_price or self.entry_price
+                self.lowest_price = self.entry_price
+                self.short_trail_stop = None
+        else:
+            if self.position_state != 0:
+                self.reset_state()
+
+    def check_realtime_exit(self, current_price: float, current_atr: float) -> Optional[SignalResult]:
+        """
+        Checks real-time live price against Trailing Stop, Take Profit, and Emergency Stop
+        intra-candle (without waiting for the candle to close) to lock in profit.
+        """
+        if self.position_state == 0 or self.entry_price is None or current_atr <= 0:
+            return None
+
+        exit_reasons = []
+        action = "NONE"
+
+        if self.position_state == 1:  # LONG
+            if self.highest_price is None:
+                self.highest_price = current_price
+            else:
+                self.highest_price = max(self.highest_price, current_price)
+
+            profit_atr = (current_price - self.entry_price) / current_atr
+
+            # 1. Take Profit
+            if self.take_profit_atr > 0 and profit_atr >= self.take_profit_atr:
+                exit_reasons.append(f"RealtimeTakeProfit(+{profit_atr:.2f} ATR)")
+
+            # 2. Ratcheting Trailing Stop (Profit Protection)
+            protection_active = self.enable_protection and (profit_atr >= self.activation_atr)
+            long_candidate_stop = max(self.entry_price, self.highest_price - (current_atr * self.trail_atr))
+            if protection_active:
+                if self.long_trail_stop is None:
+                    self.long_trail_stop = long_candidate_stop
+                else:
+                    self.long_trail_stop = max(self.long_trail_stop, long_candidate_stop)
+
+            if protection_active and (self.long_trail_stop is not None) and (current_price <= self.long_trail_stop):
+                exit_reasons.append(f"RealtimeTrailingStop(stop={self.long_trail_stop:.2f})")
+
+            # 3. Emergency Stop
+            if self.enable_emergency and (profit_atr <= -self.emergency_atr):
+                exit_reasons.append(f"RealtimeEmergencyStop({profit_atr:.2f} ATR)")
+
+            if exit_reasons:
+                action = "EXIT_LONG"
+
+        elif self.position_state == -1:  # SHORT
+            if self.lowest_price is None:
+                self.lowest_price = current_price
+            else:
+                self.lowest_price = min(self.lowest_price, current_price)
+
+            profit_atr = (self.entry_price - current_price) / current_atr
+
+            # 1. Take Profit
+            if self.take_profit_atr > 0 and profit_atr >= self.take_profit_atr:
+                exit_reasons.append(f"RealtimeTakeProfit(+{profit_atr:.2f} ATR)")
+
+            # 2. Ratcheting Trailing Stop (Profit Protection)
+            protection_active = self.enable_protection and (profit_atr >= self.activation_atr)
+            short_candidate_stop = min(self.entry_price, self.lowest_price + (current_atr * self.trail_atr))
+            if protection_active:
+                if self.short_trail_stop is None:
+                    self.short_trail_stop = short_candidate_stop
+                else:
+                    self.short_trail_stop = min(self.short_trail_stop, short_candidate_stop)
+
+            if protection_active and (self.short_trail_stop is not None) and (current_price >= self.short_trail_stop):
+                exit_reasons.append(f"RealtimeTrailingStop(stop={self.short_trail_stop:.2f})")
+
+            # 3. Emergency Stop
+            if self.enable_emergency and (profit_atr <= -self.emergency_atr):
+                exit_reasons.append(f"RealtimeEmergencyStop({profit_atr:.2f} ATR)")
+
+            if exit_reasons:
+                action = "EXIT_SHORT"
+
+        if action != "NONE":
+            reason = " | ".join(exit_reasons)
+            self.reset_state()
+            return SignalResult(
+                action=action,
+                reason=reason,
+                price=current_price,
+                position_state=0,
+                entry_price=None,
+                highest_price=None,
+                lowest_price=None,
+                metrics={"current_price": current_price, "profit_atr": profit_atr}
+            )
+
+        return None
 
     # =========================================================================
     # INDICATOR CALCULATIONS (Matching Pine Script exactly)

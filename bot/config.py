@@ -35,14 +35,16 @@ class BotConfig:
     RSI_LENGTH: int = int(os.getenv("RSI_LENGTH", "14"))
     ATR_LENGTH: int = int(os.getenv("ATR_LENGTH", "14"))
     
-    # Profit Protection
+    # Profit Protection & Real-time Trailing Stop
     ENABLE_PROTECTION: bool = os.getenv("ENABLE_PROTECTION", "true").lower() in ("true", "1", "yes")
-    ACTIVATION_ATR: float = float(os.getenv("ACTIVATION_ATR", "1.0"))
-    TRAIL_ATR: float = float(os.getenv("TRAIL_ATR", "1.25"))
+    ENABLE_INTRA_CANDLE_EXIT: bool = os.getenv("ENABLE_INTRA_CANDLE_EXIT", "true").lower() in ("true", "1", "yes")
+    ACTIVATION_ATR: float = float(os.getenv("ACTIVATION_ATR", "0.8"))
+    TRAIL_ATR: float = float(os.getenv("TRAIL_ATR", "0.6"))
+    TAKE_PROFIT_ATR: float = float(os.getenv("TAKE_PROFIT_ATR", "0.0"))
     
     # Emergency Exit
     ENABLE_EMERGENCY: bool = os.getenv("ENABLE_EMERGENCY", "true").lower() in ("true", "1", "yes")
-    EMERGENCY_ATR: float = float(os.getenv("EMERGENCY_ATR", "2.5"))
+    EMERGENCY_ATR: float = float(os.getenv("EMERGENCY_ATR", "2.0"))
     
     # Standalone Bot Polling
     TIMEFRAME: str = os.getenv("TIMEFRAME", "1m")

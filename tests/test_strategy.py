@@ -94,5 +94,21 @@ class TestStrategyEngine(unittest.TestCase):
         self.assertIn(last_sig.action, ["EXIT_LONG", "SELL"])
         self.assertEqual(last_sig.position_state, 0)
 
+    def test_realtime_intra_candle_trailing_exit(self):
+        engine = StrategyEngine(activation_atr=0.8, trail_atr=0.6, emergency_atr=2.0)
+        engine.sync_position(current_size=1, entry_price=79500.0)
+        atr = 30.0
+
+        # Price rises into profit (+1.5 ATR = 79545)
+        sig1 = engine.check_realtime_exit(current_price=79545.0, current_atr=atr)
+        self.assertIsNone(sig1)
+        self.assertEqual(engine.long_trail_stop, 79527.0)
+
+        # Price pulls back to 79525 (below trailing stop)
+        sig2 = engine.check_realtime_exit(current_price=79525.0, current_atr=atr)
+        self.assertIsNotNone(sig2)
+        self.assertEqual(sig2.action, "EXIT_LONG")
+        self.assertIn("RealtimeTrailingStop", sig2.reason)
+
 if __name__ == "__main__":
     unittest.main()
