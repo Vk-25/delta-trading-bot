@@ -29,6 +29,12 @@ wheels/
 .installed.cfg
 *.egg
 
+# Local Firebase directories
+firebase/
+functions/
+.firebaserc
+firebase.json
+
 # Testing & logs
 .pytest_cache/
 *.log

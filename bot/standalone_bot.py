@@ -1,10 +1,31 @@
+import os
 import time
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import pandas as pd
 from typing import Optional
 from bot.config import config
 from bot.delta_client import DeltaExchangeClient
 from bot.strategy_engine import StrategyEngine, SignalResult
 from bot.utils import logger
+
+class RenderHealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"status":"healthy","service":"Delta Standalone Bot","state":"active"}')
+        
+    def log_message(self, format, *args):
+        pass  # Suppress noisy healthcheck logs
+
+def start_render_health_server(port: int):
+    try:
+        server = HTTPServer(("0.0.0.0", port), RenderHealthHandler)
+        logger.info(f"Render Web Service port bound successfully on 0.0.0.0:{port}")
+        server.serve_forever()
+    except Exception as e:
+        logger.warning(f"Could not bind health port {port}: {e}")
 
 class StandaloneBot:
     """
@@ -139,6 +160,15 @@ class StandaloneBot:
         """Starts the infinite polling loop."""
         logger.info(f"Starting Standalone Bot for {self.symbol} on {self.timeframe} timeframe (Delta Environment: {config.DELTA_ENVIRONMENT})...")
         
+        # Bind to Render HTTP port if running as a Web Service
+        render_port = os.getenv("PORT")
+        if render_port:
+            try:
+                t = threading.Thread(target=start_render_health_server, args=(int(render_port),), daemon=True)
+                t.start()
+            except Exception as e:
+                logger.warning(f"Could not start background health thread: {e}")
+
         # Verify connection and set leverage
         try:
             self.client.set_leverage(self.symbol, config.LEVERAGE)
