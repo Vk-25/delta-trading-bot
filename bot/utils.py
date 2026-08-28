@@ -1,3 +1,4 @@
+import sys
 import time
 import hmac
 import hashlib
@@ -5,11 +6,16 @@ import logging
 import json
 from typing import Any, Dict, Optional
 
+class FlushStreamHandler(logging.StreamHandler):
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
 def setup_logger(name: str = "DeltaBot", level: int = logging.INFO) -> logging.Logger:
     logger = logging.getLogger(name)
     if not logger.handlers:
         logger.setLevel(level)
-        handler = logging.StreamHandler()
+        handler = FlushStreamHandler(sys.stdout)
         formatter = logging.Formatter(
             "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S"
