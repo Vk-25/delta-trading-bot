@@ -23,6 +23,12 @@ class DeltaExchangeClient:
         self.base_url = (base_url or config.get_base_url()).rstrip("/")
         self.timeout = timeout
         self.session = requests.Session()
+        if config.STATIC_PROXY_URL:
+            self.session.proxies.update({
+                "http": config.STATIC_PROXY_URL,
+                "https": config.STATIC_PROXY_URL
+            })
+            logger.info(f"Using outbound proxy for Delta Exchange: {config.STATIC_PROXY_URL}")
         self._product_cache: Dict[str, Dict[str, Any]] = {}
         self._product_id_map: Dict[int, str] = {}
         self._products_cached_at: float = 0

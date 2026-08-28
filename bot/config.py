@@ -47,6 +47,9 @@ class BotConfig:
     # Standalone Bot Polling
     TIMEFRAME: str = os.getenv("TIMEFRAME", "15m")
     POLL_INTERVAL_SECONDS: int = int(os.getenv("POLL_INTERVAL_SECONDS", "10"))
+    
+    # Optional Proxy (for static IP routing on Render)
+    STATIC_PROXY_URL: str = os.getenv("STATIC_PROXY_URL", "").strip()
 
     @classmethod
     def get_base_url(cls) -> str:
