@@ -26,7 +26,7 @@ def generate_delta_signature(
     path: str,
     timestamp: str,
     query_string: str = "",
-    payload: Optional[Dict[str, Any]] = None
+    payload: Optional[Any] = None
 ) -> str:
     """
     Generates HMAC-SHA256 signature for Delta Exchange API authentication.
@@ -35,17 +35,17 @@ def generate_delta_signature(
     method = method.upper()
     body_str = ""
     if payload is not None:
-        body_str = json.dumps(payload, separators=(',', ':')) if isinstance(payload, dict) else str(payload)
+        body_str = payload if isinstance(payload, str) else json.dumps(payload, separators=(',', ':'))
     elif query_string:
-        if query_string.startswith("?"):
-            body_str = query_string
-        else:
+        if not query_string.startswith("?"):
             body_str = "?" + query_string
+        else:
+            body_str = query_string
             
     signature_data = f"{method}{timestamp}{path}{body_str}"
     
     signature = hmac.new(
-        secret.encode("utf-8"),
+        secret.strip().encode("utf-8"),
         signature_data.encode("utf-8"),
         hashlib.sha256
     ).hexdigest()

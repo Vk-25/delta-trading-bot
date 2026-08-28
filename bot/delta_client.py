@@ -18,8 +18,8 @@ class DeltaExchangeClient:
         base_url: Optional[str] = None,
         timeout: int = 15
     ):
-        self.api_key = api_key or config.DELTA_API_KEY
-        self.api_secret = api_secret or config.DELTA_API_SECRET
+        self.api_key = (api_key or config.DELTA_API_KEY).strip()
+        self.api_secret = (api_secret or config.DELTA_API_SECRET).strip()
         self.base_url = (base_url or config.get_base_url()).rstrip("/")
         self.timeout = timeout
         self.session = requests.Session()
@@ -45,7 +45,7 @@ class DeltaExchangeClient:
         method: str,
         path: str,
         query_string: str = "",
-        payload: Optional[Dict[str, Any]] = None
+        body_str: str = ""
     ) -> Dict[str, str]:
         """Builds authenticated request headers with HMAC-SHA256 signature."""
         timestamp = str(int(time.time()))
@@ -63,7 +63,7 @@ class DeltaExchangeClient:
                 path=path,
                 timestamp=timestamp,
                 query_string=query_string,
-                payload=payload
+                payload=body_str if body_str else None
             )
             headers["signature"] = signature
             
@@ -84,25 +84,30 @@ class DeltaExchangeClient:
             # Build query string
             query_string = "&".join(f"{k}={v}" for k, v in params.items())
             
+        body_str = ""
+        if payload is not None:
+            body_str = json.dumps(payload, separators=(',', ':')) if isinstance(payload, dict) else str(payload)
+
         headers = self._get_headers(
             method=method,
             path=endpoint,
             query_string=query_string,
-            payload=payload
+            body_str=body_str
         ) if auth_required else {
             "Content-Type": "application/json",
             "User-Agent": "DeltaExchange-TradingBot/1.0"
         }
 
         try:
+            req_data = body_str if body_str else None
             if method.upper() == "GET":
                 response = self.session.get(url, params=params, headers=headers, timeout=self.timeout)
             elif method.upper() == "POST":
-                response = self.session.post(url, json=payload, headers=headers, timeout=self.timeout)
+                response = self.session.post(url, data=req_data, headers=headers, timeout=self.timeout)
             elif method.upper() == "DELETE":
-                response = self.session.delete(url, json=payload, headers=headers, timeout=self.timeout)
+                response = self.session.delete(url, data=req_data, headers=headers, timeout=self.timeout)
             elif method.upper() == "PUT":
-                response = self.session.put(url, json=payload, headers=headers, timeout=self.timeout)
+                response = self.session.put(url, data=req_data, headers=headers, timeout=self.timeout)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
 
