@@ -1,5 +1,6 @@
 import sys
 import time
+import datetime
 import hmac
 import hashlib
 import logging
@@ -11,13 +12,22 @@ class FlushStreamHandler(logging.StreamHandler):
         super().emit(record)
         self.flush()
 
+class ISTFormatter(logging.Formatter):
+    """Formats timestamps in Indian Standard Time (IST / UTC+5:30)."""
+    def formatTime(self, record, datefmt=None):
+        ist = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+        dt = datetime.datetime.fromtimestamp(record.created, ist)
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
 def setup_logger(name: str = "DeltaBot", level: int = logging.INFO) -> logging.Logger:
     logger = logging.getLogger(name)
     if not logger.handlers:
         logger.setLevel(level)
         handler = FlushStreamHandler(sys.stdout)
-        formatter = logging.Formatter(
-            "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s",
+        formatter = ISTFormatter(
+            "[%(asctime)s IST] [%(levelname)s] [%(name)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S"
         )
         handler.setFormatter(formatter)

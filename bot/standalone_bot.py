@@ -143,12 +143,13 @@ class StandaloneBot:
 
         self.last_processed_timestamp = latest_timestamp
         candle_time = confirmed_df["timestamp"].iloc[-1]
+        candle_ist = candle_time + pd.Timedelta(hours=5, minutes=30)
         close_price = confirmed_df["close"].iloc[-1]
 
         signal = self.strategy.get_latest_signal(confirmed_df)
         
         logger.info(
-            f"Candle Closed [{candle_time}] | Close: {close_price:.2f} | "
+            f"Candle Closed [{candle_ist.strftime('%Y-%m-%d %H:%M:%S IST')}] | Close: {close_price:.2f} | "
             f"RSI: {signal.metrics.get('rsi', 0):.1f} | ATR: {signal.metrics.get('atr', 0):.2f} | "
             f"State: {signal.position_state} | Signal: {signal.action}"
         )
