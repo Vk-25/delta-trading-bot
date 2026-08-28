@@ -99,15 +99,19 @@ class DeltaExchangeClient:
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
 
-            data = response.json()
+            try:
+                data = response.json() if response.text and response.text.strip() else {}
+            except Exception:
+                data = {"raw_text": response.text, "error": response.text or f"HTTP status {response.status_code}"}
+
             if not response.ok:
                 error_obj = data.get("error") if isinstance(data, dict) else response.text
                 if isinstance(error_obj, dict):
-                    error_msg = error_obj.get("message") or str(error_obj)
+                    error_msg = error_obj.get("message") or error_obj.get("code") or str(error_obj)
                 elif isinstance(error_obj, str):
                     error_msg = error_obj
                 else:
-                    error_msg = str(error_obj) or response.text
+                    error_msg = str(error_obj) or response.text or f"HTTP {response.status_code}"
                 logger.error(f"Delta API error [{response.status_code}] on {method} {endpoint}: {error_msg}")
                 return {"success": False, "status_code": response.status_code, "error": error_msg, "raw": data}
             
