@@ -118,12 +118,14 @@ emergencyATR = input.float(
      group="RISK")
 
 // ============================================================================
-// EMA
+// EMA & INDICATORS
 // ============================================================================
 
 entryEMA = ta.ema(close, emaLength)
-
 exitEMA = ta.ema(close, exitEMALength)
+exitRSI = ta.rsi(close, rsiLength)
+exitATR = ta.atr(atrLength)
+[macdLine, macdSignal, macdHistogram] = ta.macd(close, 12, 26, 9)
 
 plot(
      entryEMA,
@@ -173,17 +175,6 @@ else if enableTrendContinuation
         rawBuy := true
     else if downtrend and (low < low[1] or (high[1] >= entryEMA and close < entryEMA))
         rawSell := true
-
-// ============================================================================
-// EXIT INDICATORS
-// ============================================================================
-
-exitRSI = ta.rsi(close, rsiLength)
-
-exitATR = ta.atr(atrLength)
-
-[macdLine, macdSignal, macdHistogram] =
-     ta.macd(close, 12, 26, 9)
 
 // ============================================================================
 // POSITION STATE
