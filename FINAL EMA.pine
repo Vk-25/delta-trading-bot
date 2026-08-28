@@ -26,6 +26,11 @@ confirmOnBarClose = input.bool(
      "Confirm Signals On Bar Close (recommended for live/real markets)",
      group="ENTRY")
 
+enableTrendContinuation = input.bool(
+     true,
+     "Enable Trend Continuation Re-entries",
+     group="ENTRY")
+
 // ---------------- EXIT ----------------
 
 enableSmartExit = input.bool(
@@ -65,22 +70,34 @@ atrLength = input.int(
      minval=1,
      group="EXIT INDICATORS")
 
-// ---------------- PROFIT PROTECTION ----------------
+// ---------------- ZERO-LOSS & PROFIT PROTECTION ----------------
+
+enableBreakeven = input.bool(
+     true,
+     "Enable Zero-Loss Auto-Breakeven",
+     group="PROTECTION")
+
+breakevenATR = input.float(
+     0.4,
+     "Breakeven Activation ATR",
+     minval=0.1,
+     step=0.1,
+     group="PROTECTION")
 
 enableProtection = input.bool(
      true,
-     "Enable Profit Protection",
+     "Enable Profit Protection (Trailing ATR)",
      group="PROTECTION")
 
 activationATR = input.float(
-     1.5,
-     "Activation ATR",
+     0.8,
+     "Trailing Activation ATR",
      minval=0.1,
      step=0.1,
      group="PROTECTION")
 
 trailATR = input.float(
-     1.25,
+     0.6,
      "Trailing ATR Distance",
      minval=0.1,
      step=0.05,
@@ -94,7 +111,7 @@ enableEmergency = input.bool(
      group="RISK")
 
 emergencyATR = input.float(
-     2.5,
+     2.0,
      "Emergency Loss ATR",
      minval=0.5,
      step=0.1,
@@ -146,6 +163,15 @@ if emaCuttingCandle
         rawBuy := true
 
     else if breakLow
+        rawSell := true
+
+else if enableTrendContinuation
+    bool uptrend = close > entryEMA and exitRSI >= 50 and macdLine >= macdSignal
+    bool downtrend = close < entryEMA and exitRSI <= 50 and macdLine <= macdSignal
+
+    if uptrend and (high > high[1] or (low[1] <= entryEMA and close > entryEMA))
+        rawBuy := true
+    else if downtrend and (low < low[1] or (high[1] >= entryEMA and close < entryEMA))
         rawSell := true
 
 // ============================================================================
@@ -245,6 +271,13 @@ if canProcess
         float longProfitATR =
              (close - entryPrice) / exitATR
 
+        // Zero-Loss Auto-Breakeven
+        if enableBreakeven and longProfitATR >= breakevenATR
+            float beLevel = entryPrice + (exitATR * 0.05)
+            if na(longTrailStop) or longTrailStop < beLevel
+                longTrailStop := beLevel
+
+        // Profit protection
         bool protectionActive =
              enableProtection and
              longProfitATR >= activationATR
@@ -262,7 +295,6 @@ if canProcess
                 longTrailStop := math.max(longTrailStop, longCandidateStop)
 
         bool protectionExit =
-             protectionActive and
              not na(longTrailStop) and
              close <= longTrailStop
 
@@ -321,12 +353,18 @@ if canProcess
              rawBuy
 
         // ----------------------------------------------------------------
-        // Profit protection
+        // Zero-Loss Auto-Breakeven
         // ----------------------------------------------------------------
 
         float shortProfitATR =
              (entryPrice - close) / exitATR
 
+        if enableBreakeven and shortProfitATR >= breakevenATR
+            float beLevel = entryPrice - (exitATR * 0.05)
+            if na(shortTrailStop) or shortTrailStop > beLevel
+                shortTrailStop := beLevel
+
+        // Profit protection
         bool protectionActive =
              enableProtection and
              shortProfitATR >= activationATR
@@ -344,7 +382,6 @@ if canProcess
                 shortTrailStop := math.min(shortTrailStop, shortCandidateStop)
 
         bool protectionExit =
-             protectionActive and
              not na(shortTrailStop) and
              close >= shortTrailStop
 

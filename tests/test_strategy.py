@@ -110,5 +110,34 @@ class TestStrategyEngine(unittest.TestCase):
         self.assertEqual(sig2.action, "EXIT_LONG")
         self.assertIn("RealtimeTrailingStop", sig2.reason)
 
+    def test_autobreakeven_zero_loss(self):
+        engine = StrategyEngine(enable_breakeven=True, breakeven_atr=0.4, fee_buffer=2.0)
+        engine.sync_position(current_size=1, entry_price=79500.0)
+        atr = 30.0
+
+        # Price moves +0.5 ATR (79515) -> Breakeven must lock stop to 79500 + 2 = 79502
+        sig1 = engine.check_realtime_exit(current_price=79515.0, current_atr=atr)
+        self.assertIsNone(sig1)
+        self.assertTrue(engine.breakeven_locked)
+        self.assertEqual(engine.long_trail_stop, 79502.0)
+
+        # Price drops back towards entry (79501) -> Triggers AutoBreakeven exit with positive profit, zero loss
+        sig2 = engine.check_realtime_exit(current_price=79501.0, current_atr=atr)
+        self.assertIsNotNone(sig2)
+        self.assertEqual(sig2.action, "EXIT_LONG")
+        self.assertIn("AutoBreakeven", sig2.reason)
+
+    def test_live_trend_continuation_entry(self):
+        engine = StrategyEngine(enable_live_entries=True, enable_trend_continuation=True)
+        # Create an uptrend dataset above EMA 20
+        bars = [{"open": 100.0 + i, "high": 101.5 + i, "low": 99.5 + i, "close": 101.0 + i, "volume": 100} for i in range(35)]
+        # Make the last bar a breakout above previous high
+        bars.append({"open": 135.0, "high": 138.0, "low": 134.5, "close": 137.5, "volume": 100})
+        df = pd.DataFrame(bars)
+        
+        live_sig = engine.get_live_signal(df)
+        self.assertEqual(live_sig.action, "BUY")
+        self.assertIn("TrendContinuation", live_sig.reason)
+
 if __name__ == "__main__":
     unittest.main()

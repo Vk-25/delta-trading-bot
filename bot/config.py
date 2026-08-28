@@ -35,6 +35,15 @@ class BotConfig:
     RSI_LENGTH: int = int(os.getenv("RSI_LENGTH", "14"))
     ATR_LENGTH: int = int(os.getenv("ATR_LENGTH", "14"))
     
+    # Entry Refinements (Live Intra-Candle & Trend Continuation)
+    ENABLE_LIVE_ENTRIES: bool = os.getenv("ENABLE_LIVE_ENTRIES", "true").lower() in ("true", "1", "yes")
+    ENABLE_TREND_CONTINUATION: bool = os.getenv("ENABLE_TREND_CONTINUATION", "true").lower() in ("true", "1", "yes")
+    
+    # Capital Protection & Zero-Loss Auto-Breakeven
+    ENABLE_BREAKEVEN: bool = os.getenv("ENABLE_BREAKEVEN", "true").lower() in ("true", "1", "yes")
+    BREAKEVEN_ATR: float = float(os.getenv("BREAKEVEN_ATR", "0.4"))
+    FEE_BUFFER_USD: float = float(os.getenv("FEE_BUFFER_USD", "2.0"))
+    
     # Profit Protection & Real-time Trailing Stop
     ENABLE_PROTECTION: bool = os.getenv("ENABLE_PROTECTION", "true").lower() in ("true", "1", "yes")
     ENABLE_INTRA_CANDLE_EXIT: bool = os.getenv("ENABLE_INTRA_CANDLE_EXIT", "true").lower() in ("true", "1", "yes")
@@ -48,7 +57,7 @@ class BotConfig:
     
     # Standalone Bot Polling
     TIMEFRAME: str = os.getenv("TIMEFRAME", "1m")
-    POLL_INTERVAL_SECONDS: int = int(os.getenv("POLL_INTERVAL_SECONDS", "3"))
+    POLL_INTERVAL_SECONDS: int = int(os.getenv("POLL_INTERVAL_SECONDS", "1"))
     
     # Optional Proxy (for static IP routing on Render)
     STATIC_PROXY_URL: str = os.getenv("STATIC_PROXY_URL", "").strip()

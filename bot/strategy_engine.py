@@ -30,12 +30,17 @@ class StrategyEngine:
         enable_smart_exit: bool = True,
         exit_on_opposite: bool = True,
         exit_confirmations: int = 2,
+        enable_breakeven: bool = True,
+        breakeven_atr: float = 0.4,
+        fee_buffer: float = 2.0,
         enable_protection: bool = True,
         activation_atr: float = 0.8,
         trail_atr: float = 0.6,
         take_profit_atr: float = 0.0,
         enable_emergency: bool = True,
-        emergency_atr: float = 2.0
+        emergency_atr: float = 2.0,
+        enable_live_entries: bool = True,
+        enable_trend_continuation: bool = True
     ):
         self.entry_ema_length = entry_ema_length
         self.exit_ema_length = exit_ema_length
@@ -44,12 +49,17 @@ class StrategyEngine:
         self.enable_smart_exit = enable_smart_exit
         self.exit_on_opposite = exit_on_opposite
         self.exit_confirmations = exit_confirmations
+        self.enable_breakeven = enable_breakeven
+        self.breakeven_atr = breakeven_atr
+        self.fee_buffer = fee_buffer
         self.enable_protection = enable_protection
         self.activation_atr = activation_atr
         self.trail_atr = trail_atr
         self.take_profit_atr = take_profit_atr
         self.enable_emergency = enable_emergency
         self.emergency_atr = emergency_atr
+        self.enable_live_entries = enable_live_entries
+        self.enable_trend_continuation = enable_trend_continuation
         
         # State variables
         self.position_state: int = 0  # 0 = Flat, 1 = Long, -1 = Short
@@ -58,6 +68,7 @@ class StrategyEngine:
         self.lowest_price: Optional[float] = None
         self.long_trail_stop: Optional[float] = None
         self.short_trail_stop: Optional[float] = None
+        self.breakeven_locked: bool = False
 
     def reset_state(self):
         """Resets the internal position state."""
@@ -67,6 +78,7 @@ class StrategyEngine:
         self.lowest_price = None
         self.long_trail_stop = None
         self.short_trail_stop = None
+        self.breakeven_locked = False
 
     def sync_position(self, current_size: float, entry_price: Optional[float] = None):
         """Syncs internal state with actual exchange position."""
@@ -76,20 +88,22 @@ class StrategyEngine:
                 self.entry_price = entry_price or self.entry_price
                 self.highest_price = self.entry_price
                 self.long_trail_stop = None
+                self.breakeven_locked = False
         elif current_size < 0:
             if self.position_state != -1:
                 self.position_state = -1
                 self.entry_price = entry_price or self.entry_price
                 self.lowest_price = self.entry_price
                 self.short_trail_stop = None
+                self.breakeven_locked = False
         else:
             if self.position_state != 0:
                 self.reset_state()
 
     def check_realtime_exit(self, current_price: float, current_atr: float) -> Optional[SignalResult]:
         """
-        Checks real-time live price against Trailing Stop, Take Profit, and Emergency Stop
-        intra-candle (without waiting for the candle to close) to lock in profit.
+        Checks real-time live price against Auto-Breakeven, Trailing Stop, Take Profit, and Emergency Stop
+        intra-candle (without waiting for the candle to close) to lock in profit and guarantee zero loss.
         """
         if self.position_state == 0 or self.entry_price is None or current_atr <= 0:
             return None
@@ -109,19 +123,28 @@ class StrategyEngine:
             if self.take_profit_atr > 0 and profit_atr >= self.take_profit_atr:
                 exit_reasons.append(f"RealtimeTakeProfit(+{profit_atr:.2f} ATR)")
 
-            # 2. Ratcheting Trailing Stop (Profit Protection)
+            # 2. Zero-Loss Auto-Breakeven Lock (+Fees)
+            if self.enable_breakeven and profit_atr >= self.breakeven_atr:
+                be_level = self.entry_price + self.fee_buffer
+                if self.long_trail_stop is None or self.long_trail_stop < be_level:
+                    self.long_trail_stop = be_level
+                    self.breakeven_locked = True
+
+            # 3. Ratcheting Trailing Stop (Profit Protection)
             protection_active = self.enable_protection and (profit_atr >= self.activation_atr)
-            long_candidate_stop = max(self.entry_price, self.highest_price - (current_atr * self.trail_atr))
+            long_candidate_stop = max(self.entry_price + (self.fee_buffer if self.breakeven_locked else 0),
+                                      self.highest_price - (current_atr * self.trail_atr))
             if protection_active:
                 if self.long_trail_stop is None:
                     self.long_trail_stop = long_candidate_stop
                 else:
                     self.long_trail_stop = max(self.long_trail_stop, long_candidate_stop)
 
-            if protection_active and (self.long_trail_stop is not None) and (current_price <= self.long_trail_stop):
-                exit_reasons.append(f"RealtimeTrailingStop(stop={self.long_trail_stop:.2f})")
+            if (self.long_trail_stop is not None) and (current_price <= self.long_trail_stop):
+                exit_label = "AutoBreakeven" if self.breakeven_locked and not protection_active else "RealtimeTrailingStop"
+                exit_reasons.append(f"{exit_label}(stop={self.long_trail_stop:.2f})")
 
-            # 3. Emergency Stop
+            # 4. Emergency Stop
             if self.enable_emergency and (profit_atr <= -self.emergency_atr):
                 exit_reasons.append(f"RealtimeEmergencyStop({profit_atr:.2f} ATR)")
 
@@ -140,19 +163,28 @@ class StrategyEngine:
             if self.take_profit_atr > 0 and profit_atr >= self.take_profit_atr:
                 exit_reasons.append(f"RealtimeTakeProfit(+{profit_atr:.2f} ATR)")
 
-            # 2. Ratcheting Trailing Stop (Profit Protection)
+            # 2. Zero-Loss Auto-Breakeven Lock (+Fees)
+            if self.enable_breakeven and profit_atr >= self.breakeven_atr:
+                be_level = self.entry_price - self.fee_buffer
+                if self.short_trail_stop is None or self.short_trail_stop > be_level:
+                    self.short_trail_stop = be_level
+                    self.breakeven_locked = True
+
+            # 3. Ratcheting Trailing Stop (Profit Protection)
             protection_active = self.enable_protection and (profit_atr >= self.activation_atr)
-            short_candidate_stop = min(self.entry_price, self.lowest_price + (current_atr * self.trail_atr))
+            short_candidate_stop = min(self.entry_price - (self.fee_buffer if self.breakeven_locked else 0),
+                                       self.lowest_price + (current_atr * self.trail_atr))
             if protection_active:
                 if self.short_trail_stop is None:
                     self.short_trail_stop = short_candidate_stop
                 else:
                     self.short_trail_stop = min(self.short_trail_stop, short_candidate_stop)
 
-            if protection_active and (self.short_trail_stop is not None) and (current_price >= self.short_trail_stop):
-                exit_reasons.append(f"RealtimeTrailingStop(stop={self.short_trail_stop:.2f})")
+            if (self.short_trail_stop is not None) and (current_price >= self.short_trail_stop):
+                exit_label = "AutoBreakeven" if self.breakeven_locked and not protection_active else "RealtimeTrailingStop"
+                exit_reasons.append(f"{exit_label}(stop={self.short_trail_stop:.2f})")
 
-            # 3. Emergency Stop
+            # 4. Emergency Stop
             if self.enable_emergency and (profit_atr <= -self.emergency_atr):
                 exit_reasons.append(f"RealtimeEmergencyStop({profit_atr:.2f} ATR)")
 
@@ -170,10 +202,99 @@ class StrategyEngine:
                 entry_price=None,
                 highest_price=None,
                 lowest_price=None,
-                metrics={"current_price": current_price, "profit_atr": profit_atr}
+                metrics={"current_price": current_price, "profit_atr": profit_atr, "breakeven": self.breakeven_locked}
             )
 
         return None
+
+    def get_live_signal(self, df: pd.DataFrame) -> SignalResult:
+        """
+        Evaluates real-time live price against EMA Cut Breakouts and Trend Continuation
+        without waiting for the candle to close.
+        """
+        if len(df) < 30:
+            return SignalResult("NONE", "Insufficient Data", float(df['close'].iloc[-1]), self.position_state, self.entry_price, self.highest_price, self.lowest_price, {})
+
+        ema_series = self.calculate_ema(df['close'], self.entry_ema_length)
+        rsi_series = self.calculate_rsi(df['close'], self.rsi_length)
+        atr_series = self.calculate_atr(df, self.atr_length)
+        macd_line, macd_sig, _ = self.calculate_macd(df['close'])
+
+        live_close = float(df['close'].iloc[-1])
+        live_high = float(df['high'].iloc[-1])
+        live_low = float(df['low'].iloc[-1])
+        live_ema = float(ema_series.iloc[-1])
+        live_rsi = float(rsi_series.iloc[-1])
+        live_atr = float(atr_series.iloc[-1])
+        live_macd = float(macd_line.iloc[-1])
+        live_signal_line = float(macd_sig.iloc[-1])
+
+        prev_high = float(df['high'].iloc[-2])
+        prev_low = float(df['low'].iloc[-2])
+        prev_close = float(df['close'].iloc[-2])
+        prev_ema = float(ema_series.iloc[-2])
+
+        action = "NONE"
+        reason = ""
+
+        # Only evaluate entries if currently flat (or looking to reverse)
+        if self.position_state == 0:
+            # 1. Live EMA Cut Breakout Entry
+            ema_cut_prev = (prev_high >= prev_ema) and (prev_low <= prev_ema)
+            live_bullish_cut_breakout = ema_cut_prev and (live_high > prev_high) and (live_close >= live_ema)
+            live_bearish_cut_breakout = ema_cut_prev and (live_low < prev_low) and (live_close <= live_ema)
+
+            if live_bullish_cut_breakout:
+                action = "BUY"
+                reason = "LiveEMACutBreakout(High)"
+            elif live_bearish_cut_breakout:
+                action = "SELL"
+                reason = "LiveEMACutBreakout(Low)"
+
+            # 2. Live Trend Continuation / Momentum Re-entry (No waiting for EMA Cut)
+            elif self.enable_trend_continuation:
+                uptrend = (live_close > live_ema) and (live_rsi >= 50) and (live_macd >= live_signal_line)
+                downtrend = (live_close < live_ema) and (live_rsi <= 50) and (live_macd <= live_signal_line)
+
+                # Bullish continuation: Higher high breakout or EMA bounce
+                if uptrend and (live_high > prev_high):
+                    action = "BUY"
+                    reason = "LiveTrendContinuation(UptrendBreakout)"
+                elif uptrend and (prev_low <= live_ema and live_close > live_ema):
+                    action = "BUY"
+                    reason = "LiveTrendContinuation(EMABounce)"
+
+                # Bearish continuation: Lower low breakdown or EMA rejection
+                elif downtrend and (live_low < prev_low):
+                    action = "SELL"
+                    reason = "LiveTrendContinuation(DowntrendBreakdown)"
+                elif downtrend and (prev_high >= live_ema and live_close < live_ema):
+                    action = "SELL"
+                    reason = "LiveTrendContinuation(EMARejection)"
+
+            if action == "BUY":
+                self.position_state = 1
+                self.entry_price = live_close
+                self.highest_price = live_close
+                self.long_trail_stop = None
+                self.breakeven_locked = False
+            elif action == "SELL":
+                self.position_state = -1
+                self.entry_price = live_close
+                self.lowest_price = live_close
+                self.short_trail_stop = None
+                self.breakeven_locked = False
+
+        return SignalResult(
+            action=action,
+            reason=reason,
+            price=live_close,
+            position_state=self.position_state,
+            entry_price=self.entry_price,
+            highest_price=self.highest_price,
+            lowest_price=self.lowest_price,
+            metrics={"rsi": live_rsi, "atr": live_atr, "ema": live_ema, "live_price": live_close}
+        )
 
     # =========================================================================
     # INDICATOR CALCULATIONS (Matching Pine Script exactly)

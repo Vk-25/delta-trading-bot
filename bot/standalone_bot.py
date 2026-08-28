@@ -47,12 +47,17 @@ class StandaloneBot:
             enable_smart_exit=config.ENABLE_SMART_EXIT,
             exit_on_opposite=config.EXIT_ON_OPPOSITE,
             exit_confirmations=config.EXIT_CONFIRMATIONS,
+            enable_breakeven=config.ENABLE_BREAKEVEN,
+            breakeven_atr=config.BREAKEVEN_ATR,
+            fee_buffer=config.FEE_BUFFER_USD,
             enable_protection=config.ENABLE_PROTECTION,
             activation_atr=config.ACTIVATION_ATR,
             trail_atr=config.TRAIL_ATR,
             take_profit_atr=config.TAKE_PROFIT_ATR,
             enable_emergency=config.ENABLE_EMERGENCY,
-            emergency_atr=config.EMERGENCY_ATR
+            emergency_atr=config.EMERGENCY_ATR,
+            enable_live_entries=config.ENABLE_LIVE_ENTRIES,
+            enable_trend_continuation=config.ENABLE_TREND_CONTINUATION
         )
         self.last_processed_timestamp: Optional[int] = None
 
@@ -146,11 +151,19 @@ class StandaloneBot:
 
             rt_signal = self.strategy.check_realtime_exit(live_price, latest_atr)
             if rt_signal and rt_signal.action != "NONE":
-                logger.info(f"⚡ [REAL-TIME INTRA-CANDLE PROFIT LOCK] {rt_signal.action} -> {rt_signal.reason} (Price: {live_price:.2f})")
+                logger.info(f"[REAL-TIME PROFIT LOCK] {rt_signal.action} -> {rt_signal.reason} (Price: {live_price:.2f})")
                 self.execute_signal(rt_signal)
                 return
 
-        # 2. CONFIRMED CANDLE CLOSE STRATEGY EVALUATION (Runs on every completed bar)
+        # 2. REAL-TIME LIVE ENTRY CHECK (Runs every 1-2 seconds when flat - No 60s delay!)
+        if config.ENABLE_LIVE_ENTRIES and self.strategy.position_state == 0:
+            live_entry_sig = self.strategy.get_live_signal(df)
+            if live_entry_sig and live_entry_sig.action in ("BUY", "SELL"):
+                logger.info(f"[REAL-TIME LIVE ENTRY] {live_entry_sig.action} -> {live_entry_sig.reason} (Price: {live_entry_sig.price:.2f})")
+                self.execute_signal(live_entry_sig)
+                return
+
+        # 3. CONFIRMED CANDLE CLOSE STRATEGY EVALUATION (Runs on every completed bar)
         confirmed_df = df.iloc[:-1].copy()
         latest_timestamp = int(confirmed_df["timestamp"].iloc[-1].timestamp())
 
