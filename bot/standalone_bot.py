@@ -213,23 +213,33 @@ class StandaloneBot:
         df.reset_index(drop=True, inplace=True)
         return df
 
-    def sync_exchange_trailing_stop(self, current_atr: float):
+    def sync_exchange_trailing_stop(self, current_atr: float, live_price: Optional[float] = None):
         """Updates the real Stop-Loss order on Delta Exchange as the trailing stop moves."""
         if self.strategy.position_state == 1 and self.strategy.long_trail_stop:
             new_sl = round(self.strategy.long_trail_stop, 2)
+            # Long stop must be strictly below current market price
+            if live_price is not None and new_sl >= (live_price - 0.10):
+                return
+
             if self.last_exchange_stop_price is None or (new_sl - self.last_exchange_stop_price) >= 0.20:
                 logger.info(f"🛡️ [UPDATING DELTA STOP] Moving real Long Stop-Loss on Delta to {new_sl:.2f}")
                 self.client.cancel_all_orders(self.symbol)
-                self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "sell", stop_price=new_sl)
-                self.last_exchange_stop_price = new_sl
+                res = self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "sell", stop_price=new_sl)
+                if res.get("success"):
+                    self.last_exchange_stop_price = new_sl
 
         elif self.strategy.position_state == -1 and self.strategy.short_trail_stop:
             new_sl = round(self.strategy.short_trail_stop, 2)
+            # Short stop must be strictly above current market price
+            if live_price is not None and new_sl <= (live_price + 0.10):
+                return
+
             if self.last_exchange_stop_price is None or (self.last_exchange_stop_price - new_sl) >= 0.20:
                 logger.info(f"🛡️ [UPDATING DELTA STOP] Moving real Short Stop-Loss on Delta to {new_sl:.2f}")
                 self.client.cancel_all_orders(self.symbol)
-                self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "buy", stop_price=new_sl)
-                self.last_exchange_stop_price = new_sl
+                res = self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "buy", stop_price=new_sl)
+                if res.get("success"):
+                    self.last_exchange_stop_price = new_sl
 
     def execute_signal(self, signal: SignalResult, current_atr: float = 8.0):
         """Dispatches orders to Delta Exchange based on signal action."""
@@ -361,7 +371,7 @@ class StandaloneBot:
                 return
             else:
                 # Keep real stop order on Delta Exchange synced with trailing stop / breakeven
-                self.sync_exchange_trailing_stop(latest_atr)
+                self.sync_exchange_trailing_stop(latest_atr, live_price=live_price)
 
         # 2. REAL-TIME LIVE ENTRY CHECK (Runs every 1-2 seconds when flat - No 60s delay!)
         if config.ENABLE_LIVE_ENTRIES and self.strategy.position_state == 0:
