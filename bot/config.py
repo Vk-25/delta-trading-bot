@@ -35,9 +35,9 @@ class BotConfig:
     RSI_LENGTH: int = int(os.getenv("RSI_LENGTH", "14"))
     ATR_LENGTH: int = int(os.getenv("ATR_LENGTH", "14"))
     
-    # Entry Refinements (Live Intra-Candle & Trend Continuation)
+    # Entry Refinements (Option A: Strict 21 EMA Cut Breakout ONLY)
     ENABLE_LIVE_ENTRIES: bool = os.getenv("ENABLE_LIVE_ENTRIES", "true").lower() in ("true", "1", "yes")
-    ENABLE_TREND_CONTINUATION: bool = os.getenv("ENABLE_TREND_CONTINUATION", "true").lower() in ("true", "1", "yes")
+    ENABLE_TREND_CONTINUATION: bool = os.getenv("ENABLE_TREND_CONTINUATION", "false").lower() in ("true", "1", "yes")
     
     # 100x Capital Protection & Zero-Loss Auto-Breakeven (9% ROI Initial Lock)
     ENABLE_BREAKEVEN: bool = os.getenv("ENABLE_BREAKEVEN", "true").lower() in ("true", "1", "yes")
