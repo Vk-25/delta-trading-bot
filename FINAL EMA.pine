@@ -78,10 +78,10 @@ enableBreakeven = input.bool(
      group="PROTECTION")
 
 breakevenATR = input.float(
-     0.25,
-     "Breakeven Activation ATR (0.25 = +$3 on ETH)",
+     0.24,
+     "Breakeven Activation ATR (0.24 = 9% ROI on 100x)",
      minval=0.1,
-     step=0.05,
+     step=0.01,
      group="PROTECTION")
 
 enableProtection = input.bool(
@@ -97,7 +97,7 @@ activationATR = input.float(
      group="PROTECTION")
 
 trailATR = input.float(
-     0.40,
+     0.35,
      "Trailing ATR Distance",
      minval=0.1,
      step=0.05,
