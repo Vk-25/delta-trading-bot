@@ -104,10 +104,13 @@ class StandaloneBot:
                 side="buy",
                 order_type=config.ORDER_TYPE
             )
-            # Sync strategy state with entry price
-            entry_p = float(res.get("result", {}).get("avg_fill_price") or signal.metrics.get("current_price") or 0)
-            if entry_p > 0:
-                self.strategy.sync_position(config.ORDER_SIZE, entry_p)
+            # Only sync position if the order actually succeeded on Delta Exchange
+            if res.get("success"):
+                entry_p = float(res.get("result", {}).get("avg_fill_price") or signal.metrics.get("current_price") or 0)
+                self.strategy.sync_position(config.ORDER_SIZE, entry_p if entry_p > 0 else None)
+            else:
+                logger.error(f"BUY order failed to execute on Delta Exchange: {res.get('error')}")
+                self.strategy.reset_state()
 
         elif action == "SELL":
             if existing_size > 0:
@@ -121,21 +124,25 @@ class StandaloneBot:
                 side="sell",
                 order_type=config.ORDER_TYPE
             )
-            entry_p = float(res.get("result", {}).get("avg_fill_price") or signal.metrics.get("current_price") or 0)
-            if entry_p > 0:
-                self.strategy.sync_position(-config.ORDER_SIZE, entry_p)
+            # Only sync position if the order actually succeeded on Delta Exchange
+            if res.get("success"):
+                entry_p = float(res.get("result", {}).get("avg_fill_price") or signal.metrics.get("current_price") or 0)
+                self.strategy.sync_position(-config.ORDER_SIZE, entry_p if entry_p > 0 else None)
+            else:
+                logger.error(f"SELL order failed to execute on Delta Exchange: {res.get('error')}")
+                self.strategy.reset_state()
 
         elif action == "EXIT_LONG":
             if existing_size > 0:
                 logger.info(f"Exiting LONG position on {self.symbol}...")
                 self.client.close_position(self.symbol)
-                self.strategy.reset_state()
+            self.strategy.reset_state()
 
         elif action == "EXIT_SHORT":
             if existing_size < 0:
                 logger.info(f"Exiting SHORT position on {self.symbol}...")
                 self.client.close_position(self.symbol)
-                self.strategy.reset_state()
+            self.strategy.reset_state()
 
     def run_cycle(self):
         """Runs a single evaluation cycle with real-time profit protection & closed-bar entries."""

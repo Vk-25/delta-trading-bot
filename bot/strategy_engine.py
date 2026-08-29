@@ -272,18 +272,7 @@ class StrategyEngine:
                     action = "SELL"
                     reason = "LiveTrendContinuation(EMARejection)"
 
-            if action == "BUY":
-                self.position_state = 1
-                self.entry_price = live_close
-                self.highest_price = live_close
-                self.long_trail_stop = None
-                self.breakeven_locked = False
-            elif action == "SELL":
-                self.position_state = -1
-                self.entry_price = live_close
-                self.lowest_price = live_close
-                self.short_trail_stop = None
-                self.breakeven_locked = False
+            target_state = 1 if action == "BUY" else (-1 if action == "SELL" else self.position_state)
 
         return SignalResult(
             action=action,
