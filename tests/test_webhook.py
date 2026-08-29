@@ -1,4 +1,4 @@
-﻿import unittest
+import unittest
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from bot.webhook_server import app
@@ -12,8 +12,11 @@ class TestWebhookServer(unittest.TestCase):
     def test_root_and_health(self):
         res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
-        data = res.json()
-        self.assertEqual(data["status"], "online")
+        self.assertIn("DeltaBot Live Dashboard", res.text)
+        
+        health_res = self.client.get("/health")
+        self.assertEqual(health_res.status_code, 200)
+        self.assertEqual(health_res.json()["status"], "healthy")
 
     def test_unauthorized_webhook(self):
         payload = {
