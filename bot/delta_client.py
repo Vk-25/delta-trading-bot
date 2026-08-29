@@ -331,13 +331,35 @@ class DeltaExchangeClient:
         logger.info(f"Submitting {stop_order_type.upper()} ({side.upper()}) for {size} {symbol} at stop price {stop_price:.2f} on Delta...")
         return self._request("POST", "/v2/orders", payload=payload)
 
+    def cancel_order(self, symbol: str, order_id: int) -> Dict[str, Any]:
+        """Cancels a specific order by ID."""
+        product_id = self.get_product_id(symbol)
+        if not product_id:
+            return {"success": False, "error": f"Symbol not found: {symbol}"}
+        return self._request("DELETE", "/v2/orders", payload={"id": order_id, "product_id": product_id})
+
     def cancel_all_orders(self, symbol: str) -> Dict[str, Any]:
-        """Cancels all open orders (including stop-loss orders) for a symbol."""
+        """
+        Cancels all open orders (including stop-loss orders) for a symbol.
+        Executes bulk cancellation and sweeps any lingering open order IDs individually.
+        """
         product_id = self.get_product_id(symbol)
         if not product_id:
             return {"success": False, "error": f"Symbol not found: {symbol}"}
 
-        return self._request("DELETE", "/v2/orders/all", payload={"product_id": product_id})
+        # 1. Primary bulk cancel
+        res = self._request("DELETE", "/v2/orders/all", payload={"product_id": product_id})
+
+        # 2. Sweep query for any remaining open/stop orders and cancel individually
+        open_res = self.get_open_orders(symbol)
+        if open_res.get("success") and isinstance(open_res.get("result"), list):
+            for order in open_res["result"]:
+                oid = order.get("id")
+                if oid:
+                    logger.info(f"🧹 Cancelling lingering order ID {oid} on Delta Exchange...")
+                    self._request("DELETE", "/v2/orders", payload={"id": oid, "product_id": product_id})
+
+        return res
 
     def get_open_orders(self, symbol: str) -> Dict[str, Any]:
         """Fetches active open orders for a symbol."""

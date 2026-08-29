@@ -365,6 +365,11 @@ class StandaloneBot:
 
         # 2. REAL-TIME LIVE ENTRY CHECK (Runs every 1-2 seconds when flat - No 60s delay!)
         if config.ENABLE_LIVE_ENTRIES and self.strategy.position_state == 0:
+            # Sweep any leftover orders if flat
+            if self.last_exchange_stop_price is not None:
+                self.client.cancel_all_orders(self.symbol)
+                self.last_exchange_stop_price = None
+
             live_entry_sig = self.strategy.get_live_signal(df)
             if live_entry_sig and live_entry_sig.action in ("BUY", "SELL"):
                 logger.info(f"[REAL-TIME LIVE ENTRY] {live_entry_sig.action} -> {live_entry_sig.reason} (Price: {live_entry_sig.price:.2f})")
