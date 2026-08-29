@@ -1,655 +1,274 @@
 //@version=6
-indicator("EMA Cut Breakout [Universal Smart Exit] - FIXED", overlay=true, max_lines_count=500)
+indicator("DeltaBot 100x | Option A: Strict 21 EMA Cut Breakout", overlay=true, max_lines_count=500, max_boxes_count=100)
 
 // ============================================================================
-// INPUTS
+// INPUTS & WEBHOOK SETTINGS
 // ============================================================================
 
-emaLength = input.int(21, "Entry EMA Length", minval=1, group="ENTRY")
+webhookPassphrase = input.string("supersecretpassphrase123", "Webhook Passphrase (match .env)", group="BOT AUTOMATION")
+orderSize = input.int(1, "Order Size (Contracts)", minval=1, group="BOT AUTOMATION")
 
-showBarColors = input.bool(
-     true,
-     "Color Signal Candles",
-     group="ENTRY")
+// ---------------- OPTION A: 21 EMA CUT SETTINGS ----------------
+emaLength = input.int(21, "Entry 21 EMA Length", minval=1, group="ENTRY (OPTION A)")
+enableLiveIntraBar = input.bool(true, "Execute Instantly on Breakout (No close delay)", group="ENTRY (OPTION A)")
+enableTrendContinuation = input.bool(false, "Enable Trend Continuation Re-entries (Disabled for Option A)", group="ENTRY (OPTION A)")
 
-showBreakoutLines = input.bool(
-     true,
-     "Show Breakout Lines",
-     group="ENTRY")
+// ---------------- EXIT & CONFIRMATIONS ----------------
+enableSmartExit = input.bool(true, "Enable Smart Exit", group="EXIT & CONFIRMATIONS")
+exitOnOpposite = input.bool(true, "Exit On Opposite Signal", group="EXIT & CONFIRMATIONS")
+exitConfirmations = input.int(2, "Required Exit Confirmations (out of 4)", minval=1, maxval=4, group="EXIT & CONFIRMATIONS")
 
-// FIX #2: New input to stop signals from repainting on live/real markets.
-// When true, all position/state changes only commit once the current bar
-// is confirmed (closed). This is what makes the indicator behave the same
-// live as it does in backtest/replay.
-confirmOnBarClose = input.bool(
-     true,
-     "Confirm Signals On Bar Close (recommended for live/real markets)",
-     group="ENTRY")
-
-enableTrendContinuation = input.bool(
-     true,
-     "Enable Trend Continuation Re-entries",
-     group="ENTRY")
-
-// ---------------- EXIT ----------------
-
-enableSmartExit = input.bool(
-     true,
-     "Enable Smart Exit",
-     group="EXIT")
-
-exitOnOpposite = input.bool(
-     true,
-     "Exit On Opposite Signal",
-     group="EXIT")
-
-exitConfirmations = input.int(
-     2,
-     "Required Exit Confirmations",
-     minval=1,
-     maxval=4,
-     group="EXIT")
-
-// ---------------- EXIT INDICATORS ----------------
-
-exitEMALength = input.int(
-     21,
-     "Exit EMA Length",
-     minval=1,
-     group="EXIT INDICATORS")
-
-rsiLength = input.int(
-     14,
-     "RSI Length",
-     minval=1,
-     group="EXIT INDICATORS")
-
-atrLength = input.int(
-     14,
-     "ATR Length",
-     minval=1,
-     group="EXIT INDICATORS")
+exitEMALength = input.int(21, "Exit EMA Length", minval=1, group="EXIT INDICATORS")
+rsiLength = input.int(14, "RSI Length", minval=1, group="EXIT INDICATORS")
+atrLength = input.int(14, "ATR Length", minval=1, group="EXIT INDICATORS")
 
 // ---------------- 100x ZERO-LOSS & PROFIT PROTECTION ----------------
+enableBreakeven = input.bool(true, "Enable Zero-Loss Auto-Breakeven", group="PROTECTION")
+breakevenATR = input.float(0.24, "Breakeven Trigger ATR (0.24 = 9% ROI on 100x)", minval=0.1, step=0.01, group="PROTECTION")
+feeBufferUSD = input.float(0.50, "Fee Buffer in USD", minval=0.1, step=0.1, group="PROTECTION")
 
-enableBreakeven = input.bool(
-     true,
-     "Enable Zero-Loss Auto-Breakeven",
-     group="PROTECTION")
+enableProtection = input.bool(true, "Enable Profit Protection (Dynamic Trailing)", group="PROTECTION")
+activationATR = input.float(0.50, "Trailing Activation ATR (0.50 ATR = +20% ROI)", minval=0.1, step=0.05, group="PROTECTION")
+trailATR = input.float(0.35, "Trailing Distance ATR", minval=0.1, step=0.05, group="PROTECTION")
 
-breakevenATR = input.float(
-     0.24,
-     "Breakeven Activation ATR (0.24 = 9% ROI on 100x)",
-     minval=0.1,
-     step=0.01,
-     group="PROTECTION")
-
-enableProtection = input.bool(
-     true,
-     "Enable Profit Protection (Trailing ATR)",
-     group="PROTECTION")
-
-activationATR = input.float(
-     0.50,
-     "Trailing Activation ATR",
-     minval=0.1,
-     step=0.05,
-     group="PROTECTION")
-
-trailATR = input.float(
-     0.35,
-     "Trailing ATR Distance",
-     minval=0.1,
-     step=0.05,
-     group="PROTECTION")
-
-// ---------------- 100x EMERGENCY STOP (Anti-Liquidation) ----------------
-
-enableEmergency = input.bool(
-     true,
-     "Enable Emergency Exit",
-     group="RISK")
-
-emergencyATR = input.float(
-     0.45,
-     "Emergency Loss ATR (Placed $10 before Liquidation)",
-     minval=0.1,
-     step=0.05,
-     group="RISK")
+enableEmergency = input.bool(true, "Enable Emergency Loss Exit", group="RISK & ANTI-LIQUIDATION")
+emergencyATR = input.float(0.45, "Emergency Loss ATR ($10 before Liquidation)", minval=0.1, step=0.05, group="RISK & ANTI-LIQUIDATION")
 
 // ============================================================================
-// EMA & INDICATORS
+// INDICATOR CALCULATIONS
 // ============================================================================
 
 entryEMA = ta.ema(close, emaLength)
 exitEMA = ta.ema(close, exitEMALength)
 exitRSI = ta.rsi(close, rsiLength)
 exitATR = ta.atr(atrLength)
-[macdLine, macdSignal, macdHistogram] = ta.macd(close, 12, 26, 9)
+[macdLine, macdSignal, macdHist] = ta.macd(close, 12, 26, 9)
 
-plot(
-     entryEMA,
-     title="Entry EMA",
-     color=color.blue,
-     linewidth=2)
+plot(entryEMA, title="21 EMA", color=color.rgb(6, 182, 212), linewidth=2)
 
 // ============================================================================
-// YOUR ORIGINAL ENTRY LOGIC
+// OPTION A: 21 EMA CUT CANDLE & BREAKOUT LOGIC
 // ============================================================================
 
-emaCuttingCandle =
-     high[1] >= entryEMA[1] and
-     low[1] <= entryEMA[1]
-
-// ============================================================================
-// RAW BUY / SELL
-// ============================================================================
+// Previous candle cut through the 21 EMA
+emaCuttingCandle = high[1] >= entryEMA[1] and low[1] <= entryEMA[1]
 
 bool rawBuy = false
 bool rawSell = false
 
 if emaCuttingCandle
-
     bool breakHigh = high > high[1]
     bool breakLow = low < low[1]
 
     if breakHigh and breakLow
-
         if close > close[1]
             rawBuy := true
-
         else if close < close[1]
             rawSell := true
-
     else if breakHigh
         rawBuy := true
-
     else if breakLow
         rawSell := true
-
 else if enableTrendContinuation
     bool uptrend = close > entryEMA and exitRSI >= 50 and macdLine >= macdSignal
     bool downtrend = close < entryEMA and exitRSI <= 50 and macdLine <= macdSignal
-
-    if uptrend and (high > high[1] or (low[1] <= entryEMA and close > entryEMA))
+    if uptrend and high > high[1]
         rawBuy := true
-    else if downtrend and (low < low[1] or (high[1] >= entryEMA and close < entryEMA))
+    else if downtrend and low < low[1]
         rawSell := true
 
+// Highlight EMA Cut candles in Gold
+barcolor(emaCuttingCandle ? color.rgb(245, 158, 11, 20) : na, title="EMA Cut Candle Highlight")
+
 // ============================================================================
-// POSITION STATE
-// ============================================================================
-//
-//  0 = FLAT
-//  1 = LONG
-// -1 = SHORT
-//
+// POSITION STATE MACHINE
 // ============================================================================
 
 var int positionState = 0
-
 var float entryPrice = na
-
 var float highestPrice = na
-
 var float lowestPrice = na
-
-// Declared ratcheting trailing stops for profit protection
-var float longTrailStop = na
-
-var float shortTrailStop = na
-
-// ============================================================================
-// EXIT SIGNALS
-// ============================================================================
+var float activeStopLoss = na
+var bool beLocked = false
 
 bool exitLong = false
 bool exitShort = false
 bool newBuy = false
 bool newSell = false
 
-// ============================================================================
-// State execution gating for non-repainting live/real markets
-// ============================================================================
-
-bool canProcess = barstate.isconfirmed or not confirmOnBarClose
-
-if canProcess
-
-    // ========================================================================
-    // LONG MANAGEMENT
-    // ========================================================================
-
-    if positionState == 1
-
-        // Track highest price
-        if na(highestPrice)
-            highestPrice := high
-        else
-            highestPrice := math.max(highestPrice, high)
-
-        // ----------------------------------------------------------------
-        // Exit confirmations
-        // ----------------------------------------------------------------
-
-        bool emaWeak = close < exitEMA
-        bool rsiWeak = exitRSI < 50
-        bool macdWeak = macdLine < macdSignal
-        bool structureWeak = close < low[1]
-
-        int longScore = (emaWeak ? 1 : 0) + (rsiWeak ? 1 : 0) + (macdWeak ? 1 : 0) + (structureWeak ? 1 : 0)
-
-        // ----------------------------------------------------------------
-        // Smart exit
-        // ----------------------------------------------------------------
-
-        bool smartExit =
-             enableSmartExit and
-             longScore >= exitConfirmations
-
-        // ----------------------------------------------------------------
-        // Opposite signal
-        // ----------------------------------------------------------------
-
-        bool oppositeExit =
-             exitOnOpposite and
-             rawSell
-
-        // ----------------------------------------------------------------
-        // Profit protection
-        // ----------------------------------------------------------------
-
-        float longProfitATR =
-             (close - entryPrice) / exitATR
-
-        // Zero-Loss Auto-Breakeven
-        if enableBreakeven and longProfitATR >= breakevenATR
-            float beLevel = entryPrice + (exitATR * 0.05)
-            if na(longTrailStop) or longTrailStop < beLevel
-                longTrailStop := beLevel
-
-        // Profit protection
-        bool protectionActive =
-             enableProtection and
-             longProfitATR >= activationATR
-
-        // Ratchet the trailing stop up so it never drops back down
-        float longCandidateStop =
-             math.max(
-                 entryPrice,
-                 highestPrice - exitATR * trailATR)
-
-        if protectionActive
-            if na(longTrailStop)
-                longTrailStop := longCandidateStop
-            else
-                longTrailStop := math.max(longTrailStop, longCandidateStop)
-
-        bool protectionExit =
-             not na(longTrailStop) and
-             close <= longTrailStop
-
-        // ----------------------------------------------------------------
-        // Emergency loss
-        // ----------------------------------------------------------------
-
-        bool emergencyExit =
-             enableEmergency and
-             longProfitATR <= -emergencyATR
-
-        // ----------------------------------------------------------------
-        // Final exit
-        // ----------------------------------------------------------------
-
-        if smartExit or oppositeExit or protectionExit or emergencyExit
-            exitLong := true
-
-    // ========================================================================
-    // SHORT MANAGEMENT
-    // ========================================================================
-
-    if positionState == -1
-
-        // Track lowest price
-        if na(lowestPrice)
-            lowestPrice := low
-        else
-            lowestPrice := math.min(lowestPrice, low)
-
-        // ----------------------------------------------------------------
-        // Exit confirmations
-        // ----------------------------------------------------------------
-
-        bool emaWeak = close > exitEMA
-        bool rsiWeak = exitRSI > 50
-        bool macdWeak = macdLine > macdSignal
-        bool structureWeak = close > high[1]
-
-        int shortScore = (emaWeak ? 1 : 0) + (rsiWeak ? 1 : 0) + (macdWeak ? 1 : 0) + (structureWeak ? 1 : 0)
-
-        // ----------------------------------------------------------------
-        // Smart exit
-        // ----------------------------------------------------------------
-
-        bool smartExit =
-             enableSmartExit and
-             shortScore >= exitConfirmations
-
-        // ----------------------------------------------------------------
-        // Opposite signal
-        // ----------------------------------------------------------------
-
-        bool oppositeExit =
-             exitOnOpposite and
-             rawBuy
-
-        // ----------------------------------------------------------------
-        // Zero-Loss Auto-Breakeven
-        // ----------------------------------------------------------------
-
-        float shortProfitATR =
-             (entryPrice - close) / exitATR
-
-        if enableBreakeven and shortProfitATR >= breakevenATR
-            float beLevel = entryPrice - (exitATR * 0.05)
-            if na(shortTrailStop) or shortTrailStop > beLevel
-                shortTrailStop := beLevel
-
-        // Profit protection
-        bool protectionActive =
-             enableProtection and
-             shortProfitATR >= activationATR
-
-        // Ratchet the trailing stop down so it never moves back up
-        float shortCandidateStop =
-             math.min(
-                 entryPrice,
-                 lowestPrice + exitATR * trailATR)
-
-        if protectionActive
-            if na(shortTrailStop)
-                shortTrailStop := shortCandidateStop
-            else
-                shortTrailStop := math.min(shortTrailStop, shortCandidateStop)
-
-        bool protectionExit =
-             not na(shortTrailStop) and
-             close >= shortTrailStop
-
-        // ----------------------------------------------------------------
-        // Emergency loss
-        // ----------------------------------------------------------------
-
-        bool emergencyExit =
-             enableEmergency and
-             shortProfitATR <= -emergencyATR
-
-        // ----------------------------------------------------------------
-        // Final exit
-        // ----------------------------------------------------------------
-
-        if smartExit or oppositeExit or protectionExit or emergencyExit
-            exitShort := true
-
-    // ========================================================================
-    // EXIT POSITION
-    // ========================================================================
-
-    bool exitedThisBar = false
-
-    if exitLong
-        positionState := 0
-        entryPrice := na
-        highestPrice := na
-        lowestPrice := na
-        longTrailStop := na
-        shortTrailStop := na
-        exitedThisBar := true
-
-    if exitShort
-        positionState := 0
-        entryPrice := na
-        highestPrice := na
-        lowestPrice := na
-        longTrailStop := na
-        shortTrailStop := na
-        exitedThisBar := true
-
-    // ========================================================================
-    // NEW ENTRY
-    // ========================================================================
-
-    if positionState == 0 and not exitedThisBar
-
-        if rawBuy
-            newBuy := true
-            positionState := 1
-            entryPrice := close
-            highestPrice := high
-            lowestPrice := na
-            longTrailStop := na
-            shortTrailStop := na
-
-        else if rawSell
-            newSell := true
-            positionState := -1
-            entryPrice := close
-            lowestPrice := low
-            highestPrice := na
-            longTrailStop := na
-            shortTrailStop := na
-
-// ============================================================================
-// BUY / SELL SHAPES
-// ============================================================================
-
-plotshape(
-     newBuy,
-     title="BUY",
-     style=shape.labelup,
-     location=location.belowbar,
-     color=color.green,
-     text="BUY",
-     textcolor=color.white,
-     size=size.normal)
-
-plotshape(
-     newSell,
-     title="SELL",
-     style=shape.labeldown,
-     location=location.abovebar,
-     color=color.red,
-     text="SELL",
-     textcolor=color.white,
-     size=size.normal)
-
-plotshape(
-     exitLong,
-     title="EXIT LONG",
-     style=shape.labeldown,
-     location=location.abovebar,
-     color=color.orange,
-     text="EXIT",
-     textcolor=color.white,
-     size=size.normal)
-
-plotshape(
-     exitShort,
-     title="EXIT SHORT",
-     style=shape.labelup,
-     location=location.belowbar,
-     color=color.orange,
-     text="EXIT",
-     textcolor=color.white,
-     size=size.normal)
-
-// ============================================================================
-// ENTRY PRICE
-// ============================================================================
-
-plot(
-     positionState != 0 ? entryPrice : na,
-     title="Entry Price",
-     color=color.gray,
-     linewidth=1,
-     style=plot.style_linebr)
-
-// ============================================================================
-// PROTECTION PLOTS
-// ============================================================================
-
-float longProtection = na
-
-if positionState == 1 and enableProtection
-    if not na(longTrailStop)
-        longProtection := longTrailStop
-    else
-        float currentProfitATR = (close - entryPrice) / exitATR
-        if currentProfitATR >= activationATR
-            longProtection := math.max(entryPrice, highestPrice - exitATR * trailATR)
-
-float shortProtection = na
-
-if positionState == -1 and enableProtection
-    if not na(shortTrailStop)
-        shortProtection := shortTrailStop
-    else
-        float currentProfitATR = (entryPrice - close) / exitATR
-        if currentProfitATR >= activationATR
-            shortProtection := math.min(entryPrice, lowestPrice + exitATR * trailATR)
-
-plot(
-     longProtection,
-     title="Long Protection",
-     color=color.orange,
-     linewidth=2,
-     style=plot.style_linebr)
-
-plot(
-     shortProtection,
-     title="Short Protection",
-     color=color.orange,
-     linewidth=2,
-     style=plot.style_linebr)
-
-// ============================================================================
-// BREAKOUT LINES
-// ============================================================================
-
-if newBuy and showBreakoutLines
-    line.new(
-         bar_index[1],
-         high[1],
-         bar_index,
-         high[1],
-         color=color.green,
-         width=2,
-         style=line.style_dashed)
-
-if newSell and showBreakoutLines
-    line.new(
-         bar_index[1],
-         low[1],
-         bar_index,
-         low[1],
-         color=color.red,
-         width=2,
-         style=line.style_dashed)
-
-// ============================================================================
-// BAR COLOR
-// ============================================================================
-
-barcolor(
-     showBarColors and newBuy ?
-     color.lime :
-     showBarColors and newSell ?
-     color.red :
-     exitLong or exitShort ?
-     color.orange :
-     na)
-
-// ============================================================================
-// ALERTS
-// ============================================================================
-
-alertcondition(
-     newBuy,
-     title="BUY Alert",
-     message="BUY - EMA Cut Breakout")
-
-alertcondition(
-     newSell,
-     title="SELL Alert",
-     message="SELL - EMA Cut Breakout")
-
-alertcondition(
-     exitLong,
-     title="EXIT LONG Alert",
-     message="EXIT LONG - Smart Exit")
-
-alertcondition(
-     exitShort,
-     title="EXIT SHORT Alert",
-     message="EXIT SHORT - Smart Exit")
-
-// ============================================================================
-// DASHBOARD
-// ============================================================================
-
-var table dashboard =
-     table.new(
-         position.top_right,
-         2,
-         9)
-
-int dashboardExitScore = 0
-
+// ---------------- LONG MANAGEMENT ----------------
 if positionState == 1
-    if close < exitEMA
-        dashboardExitScore += 1
-    if exitRSI < 50
-        dashboardExitScore += 1
-    if macdLine < macdSignal
-        dashboardExitScore += 1
-    if close < low[1]
-        dashboardExitScore += 1
+    highestPrice := na(highestPrice) ? high : math.max(highestPrice, high)
 
+    bool emaWeak = close < exitEMA
+    bool rsiWeak = exitRSI < 50
+    bool macdWeak = macdLine < macdSignal
+    bool structureWeak = close < low[1]
+
+    int longScore = (emaWeak ? 1 : 0) + (rsiWeak ? 1 : 0) + (macdWeak ? 1 : 0) + (structureWeak ? 1 : 0)
+    bool smartExit = enableSmartExit and longScore >= exitConfirmations
+    bool oppositeExit = exitOnOpposite and rawSell
+
+    float profitATR = (close - entryPrice) / exitATR
+    
+    // 9% ROI Auto-Breakeven
+    if enableBreakeven and profitATR >= breakevenATR
+        float beLevel = entryPrice + feeBufferUSD
+        if na(activeStopLoss) or activeStopLoss < beLevel
+            activeStopLoss := beLevel
+            beLocked := true
+
+    // Dynamic Trailing Stop
+    bool protectionActive = enableProtection and profitATR >= activationATR
+    float candidateStop = math.max(entryPrice + (beLocked ? feeBufferUSD : 0), highestPrice - exitATR * trailATR)
+    if protectionActive
+        activeStopLoss := na(activeStopLoss) ? candidateStop : math.max(activeStopLoss, candidateStop)
+
+    bool stopHit = not na(activeStopLoss) and close <= activeStopLoss
+    bool emergencyHit = enableEmergency and profitATR <= -emergencyATR
+
+    if smartExit or oppositeExit or stopHit or emergencyHit
+        exitLong := true
+
+// ---------------- SHORT MANAGEMENT ----------------
 if positionState == -1
-    if close > exitEMA
-        dashboardExitScore += 1
-    if exitRSI > 50
-        dashboardExitScore += 1
-    if macdLine > macdSignal
-        dashboardExitScore += 1
-    if close > high[1]
-        dashboardExitScore += 1
+    lowestPrice := na(lowestPrice) ? low : math.min(lowestPrice, low)
 
+    bool emaWeak = close > exitEMA
+    bool rsiWeak = exitRSI > 50
+    bool macdWeak = macdLine > macdSignal
+    bool structureWeak = close > high[1]
+
+    int shortScore = (emaWeak ? 1 : 0) + (rsiWeak ? 1 : 0) + (macdWeak ? 1 : 0) + (structureWeak ? 1 : 0)
+    bool smartExit = enableSmartExit and shortScore >= exitConfirmations
+    bool oppositeExit = exitOnOpposite and rawBuy
+
+    float profitATR = (entryPrice - close) / exitATR
+    
+    // 9% ROI Auto-Breakeven
+    if enableBreakeven and profitATR >= breakevenATR
+        float beLevel = entryPrice - feeBufferUSD
+        if na(activeStopLoss) or activeStopLoss > beLevel
+            activeStopLoss := beLevel
+            beLocked := true
+
+    // Dynamic Trailing Stop
+    bool protectionActive = enableProtection and profitATR >= activationATR
+    float candidateStop = math.min(entryPrice - (beLocked ? feeBufferUSD : 0), lowestPrice + exitATR * trailATR)
+    if protectionActive
+        activeStopLoss := na(activeStopLoss) ? candidateStop : math.min(activeStopLoss, candidateStop)
+
+    bool stopHit = not na(activeStopLoss) and close >= activeStopLoss
+    bool emergencyHit = enableEmergency and profitATR <= -emergencyATR
+
+    if smartExit or oppositeExit or stopHit or emergencyHit
+        exitShort := true
+
+// ---------------- EXITS ----------------
+bool exitedThisBar = false
+
+if exitLong
+    positionState := 0
+    entryPrice := na
+    highestPrice := na
+    lowestPrice := na
+    activeStopLoss := na
+    beLocked := false
+    exitedThisBar := true
+
+if exitShort
+    positionState := 0
+    entryPrice := na
+    highestPrice := na
+    lowestPrice := na
+    activeStopLoss := na
+    beLocked := false
+    exitedThisBar := true
+
+// ---------------- NEW ENTRIES ----------------
+if positionState == 0 and not exitedThisBar
+    if rawBuy
+        newBuy := true
+        positionState := 1
+        entryPrice := close
+        highestPrice := high
+        lowestPrice := na
+        activeStopLoss := low[1]  // First Stop Loss at LOW of Cut Candle
+        beLocked := false
+    else if rawSell
+        newSell := true
+        positionState := -1
+        entryPrice := close
+        lowestPrice := low
+        highestPrice := na
+        activeStopLoss := high[1]  // First Stop Loss at HIGH of Cut Candle
+        beLocked := false
+
+// ============================================================================
+// VISUAL PLOTS ON CHART
+// ============================================================================
+
+// Buy / Sell Labels
+plotshape(newBuy, title="BUY Entry", style=shape.labelup, location=location.belowbar, color=color.rgb(16, 185, 129), text="BUY (EMA Cut)", textcolor=color.white, size=size.normal)
+plotshape(newSell, title="SELL Entry", style=shape.labeldown, location=location.abovebar, color=color.rgb(244, 63, 94), text="SELL (EMA Cut)", textcolor=color.white, size=size.normal)
+plotshape(exitLong, title="EXIT LONG", style=shape.labeldown, location=location.abovebar, color=color.rgb(245, 158, 11), text="EXIT LONG", textcolor=color.white, size=size.small)
+plotshape(exitShort, title="EXIT SHORT", style=shape.labelup, location=location.belowbar, color=color.rgb(245, 158, 11), text="EXIT SHORT", textcolor=color.white, size=size.small)
+
+// Live Stop Loss / Trailing Line
+plot(activeStopLoss, title="Active Stop-Loss / Trailing Level", color=positionState == 1 ? color.rgb(239, 68, 68) : (positionState == -1 ? color.rgb(239, 68, 68) : na), linewidth=2, style=plot.style_linebr)
+
+// Entry Price Reference Line
+plot(positionState != 0 ? entryPrice : na, title="Entry Price", color=color.rgb(148, 163, 184), linewidth=1, style=plot.style_circles)
+
+// ============================================================================
+// HUD INFO TABLE (TOP RIGHT OF CHART)
+// ============================================================================
+
+var table hud = table.new(position.top_right, 2, 6, bgcolor=color.rgb(15, 23, 42, 20), border_color=color.rgb(255, 255, 255, 15), border_width=1)
 if barstate.islast
+    table.cell(hud, 0, 0, "Strategy", text_color=color.rgb(148, 163, 184), text_size=size.small)
+    table.cell(hud, 1, 0, "Option A (100x Precision)", text_color=color.rgb(6, 182, 212), text_size=size.small)
 
-    table.cell(dashboard, 0, 0, "POSITION")
-    table.cell(dashboard, 1, 0, positionState == 1 ? "LONG" : positionState == -1 ? "SHORT" : "FLAT")
+    table.cell(hud, 0, 1, "Position", text_color=color.rgb(148, 163, 184), text_size=size.small)
+    string posStr = positionState == 1 ? "LONG 🟢" : (positionState == -1 ? "SHORT 🔴" : "FLAT ⚪")
+    color posCol = positionState == 1 ? color.rgb(16, 185, 129) : (positionState == -1 ? color.rgb(244, 63, 94) : color.rgb(148, 163, 184))
+    table.cell(hud, 1, 1, posStr, text_color=posCol, text_size=size.small)
 
-    table.cell(dashboard, 0, 1, "ENTRY")
-    table.cell(dashboard, 1, 1, na(entryPrice) ? "-" : str.tostring(entryPrice, "#.##"))
+    table.cell(hud, 0, 2, "Entry Price", text_color=color.rgb(148, 163, 184), text_size=size.small)
+    table.cell(hud, 1, 2, not na(entryPrice) ? "$" + str.tostring(entryPrice, "#.##") : "--", text_color=color.white, text_size=size.small)
 
-    table.cell(dashboard, 0, 2, "RSI")
-    table.cell(dashboard, 1, 2, str.tostring(exitRSI, "#.##"))
+    table.cell(hud, 0, 3, "Active Stop", text_color=color.rgb(148, 163, 184), text_size=size.small)
+    table.cell(hud, 1, 3, not na(activeStopLoss) ? "$" + str.tostring(activeStopLoss, "#.##") : "--", text_color=color.rgb(244, 63, 94), text_size=size.small)
 
-    table.cell(dashboard, 0, 3, "ATR")
-    table.cell(dashboard, 1, 3, str.tostring(exitATR, "#.##"))
+    table.cell(hud, 0, 4, "Breakeven", text_color=color.rgb(148, 163, 184), text_size=size.small)
+    table.cell(hud, 1, 4, beLocked ? "LOCKED (+Fees)" : "Ready (+9% ROI)", text_color=beLocked ? color.rgb(16, 185, 129) : color.rgb(245, 158, 11), text_size=size.small)
 
-    table.cell(dashboard, 0, 4, "EXIT SCORE")
-    table.cell(dashboard, 1, 4, str.tostring(dashboardExitScore) + "/4")
+    table.cell(hud, 0, 5, "21 EMA / RSI", text_color=color.rgb(148, 163, 184), text_size=size.small)
+    table.cell(hud, 1, 5, "$" + str.tostring(entryEMA, "#.##") + " / " + str.tostring(exitRSI, "#.#"), text_color=color.rgb(6, 182, 212), text_size=size.small)
 
-    table.cell(dashboard, 0, 5, "PROTECTION")
-    table.cell(dashboard, 1, 5, (not na(longProtection) or not na(shortProtection)) ? "ACTIVE" : "WAIT")
+// ============================================================================
+// WEBHOOK ALERTS (EXCHANGE SYNCHRONIZED)
+// ============================================================================
 
-    table.cell(dashboard, 0, 6, "OPPOSITE")
-    table.cell(dashboard, 1, 6, positionState == 1 and rawSell ? "EXIT LONG" : positionState == -1 and rawBuy ? "EXIT SHORT" : "NONE")
+buyAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"BUY","symbol":"' + syminfo.ticker + '","size":' + str.tostring(orderSize) + ',"price":' + str.tostring(close) + ',"stop_loss":' + str.tostring(low[1]) + '}'
+sellAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"SELL","symbol":"' + syminfo.ticker + '","size":' + str.tostring(orderSize) + ',"price":' + str.tostring(close) + ',"stop_loss":' + str.tostring(high[1]) + '}'
+exitLongAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"EXIT_LONG","symbol":"' + syminfo.ticker + '","price":' + str.tostring(close) + '}'
+exitShortAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"EXIT_SHORT","symbol":"' + syminfo.ticker + '","price":' + str.tostring(close) + '}'
 
-    table.cell(dashboard, 0, 7, "SMART EXIT")
-    table.cell(dashboard, 1, 7, enableSmartExit ? "ON" : "OFF")
+if newBuy
+    alert(buyAlertMsg, alert.freq_once_per_bar)
 
-    table.cell(dashboard, 0, 8, "STATUS")
-    table.cell(dashboard, 1, 8, exitLong or exitShort ? "EXIT" : positionState == 1 ? "HOLD LONG" : positionState == -1 ? "HOLD SHORT" : "WAIT")
+if newSell
+    alert(sellAlertMsg, alert.freq_once_per_bar)
+
+if exitLong
+    alert(exitLongAlertMsg, alert.freq_once_per_bar)
+
+if exitShort
+    alert(exitShortAlertMsg, alert.freq_once_per_bar)
+
+// Alertcondition declarations for TradingView Alert Wizard
+alertcondition(newBuy, title="DeltaBot BUY Alert", message='{"passphrase":"YOUR_PASSPHRASE","action":"BUY","symbol":"{{ticker}}","price":{{close}}}')
+alertcondition(newSell, title="DeltaBot SELL Alert", message='{"passphrase":"YOUR_PASSPHRASE","action":"SELL","symbol":"{{ticker}}","price":{{close}}}')
+alertcondition(exitLong, title="DeltaBot EXIT LONG Alert", message='{"passphrase":"YOUR_PASSPHRASE","action":"EXIT_LONG","symbol":"{{ticker}}","price":{{close}}}')
+alertcondition(exitShort, title="DeltaBot EXIT SHORT Alert", message='{"passphrase":"YOUR_PASSPHRASE","action":"EXIT_SHORT","symbol":"{{ticker}}","price":{{close}}}')
