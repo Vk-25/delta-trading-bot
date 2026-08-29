@@ -23,7 +23,7 @@ class BotConfig:
     # Trade execution defaults
     TRADING_SYMBOL: str = os.getenv("TRADING_SYMBOL", "ETHUSD").strip().upper()
     ORDER_SIZE: int = int(os.getenv("ORDER_SIZE", "1"))
-    LEVERAGE: int = int(os.getenv("LEVERAGE", "200"))
+    LEVERAGE: int = int(os.getenv("LEVERAGE", "100"))
     ORDER_TYPE: str = os.getenv("ORDER_TYPE", "market_order").strip()
     
     # Strategy parameters
@@ -39,21 +39,21 @@ class BotConfig:
     ENABLE_LIVE_ENTRIES: bool = os.getenv("ENABLE_LIVE_ENTRIES", "true").lower() in ("true", "1", "yes")
     ENABLE_TREND_CONTINUATION: bool = os.getenv("ENABLE_TREND_CONTINUATION", "true").lower() in ("true", "1", "yes")
     
-    # Capital Protection & Zero-Loss Auto-Breakeven
+    # 100x Capital Protection & Zero-Loss Auto-Breakeven
     ENABLE_BREAKEVEN: bool = os.getenv("ENABLE_BREAKEVEN", "true").lower() in ("true", "1", "yes")
-    BREAKEVEN_ATR: float = float(os.getenv("BREAKEVEN_ATR", "0.4"))
-    FEE_BUFFER_USD: float = float(os.getenv("FEE_BUFFER_USD", "2.0"))
+    BREAKEVEN_ATR: float = float(os.getenv("BREAKEVEN_ATR", "0.25"))
+    FEE_BUFFER_USD: float = float(os.getenv("FEE_BUFFER_USD", "0.5"))
     
-    # Profit Protection & Real-time Trailing Stop
+    # 100x Profit Protection & Real-time Trailing Stop
     ENABLE_PROTECTION: bool = os.getenv("ENABLE_PROTECTION", "true").lower() in ("true", "1", "yes")
     ENABLE_INTRA_CANDLE_EXIT: bool = os.getenv("ENABLE_INTRA_CANDLE_EXIT", "true").lower() in ("true", "1", "yes")
-    ACTIVATION_ATR: float = float(os.getenv("ACTIVATION_ATR", "0.8"))
-    TRAIL_ATR: float = float(os.getenv("TRAIL_ATR", "0.6"))
+    ACTIVATION_ATR: float = float(os.getenv("ACTIVATION_ATR", "0.50"))
+    TRAIL_ATR: float = float(os.getenv("TRAIL_ATR", "0.40"))
     TAKE_PROFIT_ATR: float = float(os.getenv("TAKE_PROFIT_ATR", "0.0"))
     
-    # Emergency Exit
+    # 100x Emergency Stop (Strictly placed at 0.45 ATR, $10 before the 0.75% liquidation threshold)
     ENABLE_EMERGENCY: bool = os.getenv("ENABLE_EMERGENCY", "true").lower() in ("true", "1", "yes")
-    EMERGENCY_ATR: float = float(os.getenv("EMERGENCY_ATR", "2.0"))
+    EMERGENCY_ATR: float = float(os.getenv("EMERGENCY_ATR", "0.45"))
     
     # Standalone Bot Polling
     TIMEFRAME: str = os.getenv("TIMEFRAME", "5m")

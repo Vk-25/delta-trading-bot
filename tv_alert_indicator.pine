@@ -29,19 +29,19 @@ exitEMALength = input.int(21, "Exit EMA Length", minval=1, group="EXIT INDICATOR
 rsiLength = input.int(14, "RSI Length", minval=1, group="EXIT INDICATORS")
 atrLength = input.int(14, "ATR Length", minval=1, group="EXIT INDICATORS")
 
-// ---------------- ZERO-LOSS & PROFIT PROTECTION ----------------
+// ---------------- 100x ZERO-LOSS & PROFIT PROTECTION ----------------
 
 enableBreakeven = input.bool(true, "Enable Zero-Loss Auto-Breakeven", group="PROTECTION")
-breakevenATR = input.float(0.4, "Breakeven Activation ATR", minval=0.1, step=0.1, group="PROTECTION")
+breakevenATR = input.float(0.25, "Breakeven Activation ATR (0.25 = +$3 on ETH)", minval=0.1, step=0.05, group="PROTECTION")
 
 enableProtection = input.bool(true, "Enable Profit Protection (Trailing ATR)", group="PROTECTION")
-activationATR = input.float(0.8, "Trailing Activation ATR", minval=0.1, step=0.1, group="PROTECTION")
-trailATR = input.float(0.6, "Trailing ATR Distance", minval=0.1, step=0.05, group="PROTECTION")
+activationATR = input.float(0.50, "Trailing Activation ATR", minval=0.1, step=0.05, group="PROTECTION")
+trailATR = input.float(0.40, "Trailing ATR Distance", minval=0.1, step=0.05, group="PROTECTION")
 
-// ---------------- EMERGENCY ----------------
+// ---------------- 100x EMERGENCY STOP (Anti-Liquidation) ----------------
 
 enableEmergency = input.bool(true, "Enable Emergency Exit", group="RISK")
-emergencyATR = input.float(2.0, "Emergency Loss ATR", minval=0.5, step=0.1, group="RISK")
+emergencyATR = input.float(0.45, "Emergency Loss ATR (Placed $10 before Liquidation)", minval=0.1, step=0.05, group="RISK")
 
 // ============================================================================
 // EMA & INDICATORS

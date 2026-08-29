@@ -23,22 +23,22 @@ class StrategyEngine:
     """
     def __init__(
         self,
-        entry_ema_length: int = 20,
-        exit_ema_length: int = 20,
+        entry_ema_length: int = 21,
+        exit_ema_length: int = 21,
         rsi_length: int = 14,
         atr_length: int = 14,
         enable_smart_exit: bool = True,
         exit_on_opposite: bool = True,
         exit_confirmations: int = 2,
         enable_breakeven: bool = True,
-        breakeven_atr: float = 0.4,
-        fee_buffer: float = 2.0,
+        breakeven_atr: float = 0.25,
+        fee_buffer: float = 0.5,
         enable_protection: bool = True,
-        activation_atr: float = 0.8,
-        trail_atr: float = 0.6,
+        activation_atr: float = 0.50,
+        trail_atr: float = 0.40,
         take_profit_atr: float = 0.0,
         enable_emergency: bool = True,
-        emergency_atr: float = 2.0,
+        emergency_atr: float = 0.45,
         enable_live_entries: bool = True,
         enable_trend_continuation: bool = True
     ):
@@ -239,10 +239,13 @@ class StrategyEngine:
 
         # Only evaluate entries if currently flat (or looking to reverse)
         if self.position_state == 0:
-            # 1. Live EMA Cut Breakout Entry
+            ema_slope_up = live_ema >= prev_ema
+            ema_slope_down = live_ema <= prev_ema
+
+            # 1. Live EMA Cut Breakout Entry (Calibrated for 100x Leverage)
             ema_cut_prev = (prev_high >= prev_ema) and (prev_low <= prev_ema)
-            live_bullish_cut_breakout = ema_cut_prev and (live_high > prev_high) and (live_close >= live_ema)
-            live_bearish_cut_breakout = ema_cut_prev and (live_low < prev_low) and (live_close <= live_ema)
+            live_bullish_cut_breakout = ema_cut_prev and (live_high > prev_high) and (live_close >= live_ema) and ema_slope_up and (live_rsi >= 50)
+            live_bearish_cut_breakout = ema_cut_prev and (live_low < prev_low) and (live_close <= live_ema) and ema_slope_down and (live_rsi <= 50)
 
             if live_bullish_cut_breakout:
                 action = "BUY"
@@ -253,8 +256,8 @@ class StrategyEngine:
 
             # 2. Live Trend Continuation / Momentum Re-entry (No waiting for EMA Cut)
             elif self.enable_trend_continuation:
-                uptrend = (live_close > live_ema) and (live_rsi >= 50) and (live_macd >= live_signal_line)
-                downtrend = (live_close < live_ema) and (live_rsi <= 50) and (live_macd <= live_signal_line)
+                uptrend = (live_close > live_ema) and (live_rsi >= 52) and (live_macd >= live_signal_line) and ema_slope_up
+                downtrend = (live_close < live_ema) and (live_rsi <= 48) and (live_macd <= live_signal_line) and ema_slope_down
 
                 # Bullish continuation: Higher high breakout or EMA bounce
                 if uptrend and (live_high > prev_high):
