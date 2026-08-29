@@ -323,9 +323,10 @@ class DeltaExchangeClient:
             "product_id": product_id,
             "size": int(size),
             "side": side.lower().strip(),
-            "order_type": "stop_market_order",
+            "order_type": "market_order",
+            "stop_order_type": stop_order_type,
             "stop_price": str(round(stop_price, 2)),
-            "stop_order_type": stop_order_type
+            "stop_trigger_method": "last_traded_price"
         }
         logger.info(f"Submitting {stop_order_type.upper()} ({side.upper()}) for {size} {symbol} at stop price {stop_price:.2f} on Delta...")
         return self._request("POST", "/v2/orders", payload=payload)
