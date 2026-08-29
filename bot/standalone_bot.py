@@ -60,6 +60,7 @@ class StandaloneBot:
             enable_trend_continuation=config.ENABLE_TREND_CONTINUATION
         )
         self.last_processed_timestamp: Optional[int] = None
+        self.last_exchange_stop_price: Optional[float] = None
 
     def fetch_ohlcv_dataframe(self) -> Optional[pd.DataFrame]:
         """Fetches candles from Delta Exchange and converts to pandas DataFrame."""
@@ -84,7 +85,25 @@ class StandaloneBot:
         df.reset_index(drop=True, inplace=True)
         return df
 
-    def execute_signal(self, signal: SignalResult):
+    def sync_exchange_trailing_stop(self, current_atr: float):
+        """Updates the real Stop-Loss order on Delta Exchange as the trailing stop moves."""
+        if self.strategy.position_state == 1 and self.strategy.long_trail_stop:
+            new_sl = round(self.strategy.long_trail_stop, 2)
+            if self.last_exchange_stop_price is None or (new_sl - self.last_exchange_stop_price) >= 0.20:
+                logger.info(f"🛡️ [UPDATING DELTA STOP] Moving real Long Stop-Loss on Delta to {new_sl:.2f}")
+                self.client.cancel_all_orders(self.symbol)
+                self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "sell", stop_price=new_sl)
+                self.last_exchange_stop_price = new_sl
+
+        elif self.strategy.position_state == -1 and self.strategy.short_trail_stop:
+            new_sl = round(self.strategy.short_trail_stop, 2)
+            if self.last_exchange_stop_price is None or (self.last_exchange_stop_price - new_sl) >= 0.20:
+                logger.info(f"🛡️ [UPDATING DELTA STOP] Moving real Short Stop-Loss on Delta to {new_sl:.2f}")
+                self.client.cancel_all_orders(self.symbol)
+                self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "buy", stop_price=new_sl)
+                self.last_exchange_stop_price = new_sl
+
+    def execute_signal(self, signal: SignalResult, current_atr: float = 8.0):
         """Dispatches orders to Delta Exchange based on signal action."""
         action = signal.action
         logger.info(f"Executing Strategy Signal: [{action}] | Reason: {signal.reason} | Metrics: {signal.metrics}")
@@ -108,6 +127,13 @@ class StandaloneBot:
             if res.get("success"):
                 entry_p = float(res.get("result", {}).get("avg_fill_price") or signal.metrics.get("current_price") or 0)
                 self.strategy.sync_position(config.ORDER_SIZE, entry_p if entry_p > 0 else None)
+                
+                # Place real anti-liquidation hard Stop-Loss directly on Delta Exchange
+                initial_sl = entry_p - (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 8.0)
+                logger.info(f"🛡️ [DELTA HARD STOP PLACED] Submitting Real Stop-Loss Order on Delta at {initial_sl:.2f}")
+                self.client.cancel_all_orders(self.symbol)
+                self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "sell", stop_price=initial_sl)
+                self.last_exchange_stop_price = initial_sl
             else:
                 logger.error(f"BUY order failed to execute on Delta Exchange: {res.get('error')}")
                 self.strategy.reset_state()
@@ -128,6 +154,13 @@ class StandaloneBot:
             if res.get("success"):
                 entry_p = float(res.get("result", {}).get("avg_fill_price") or signal.metrics.get("current_price") or 0)
                 self.strategy.sync_position(-config.ORDER_SIZE, entry_p if entry_p > 0 else None)
+                
+                # Place real anti-liquidation hard Stop-Loss directly on Delta Exchange
+                initial_sl = entry_p + (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 8.0)
+                logger.info(f"🛡️ [DELTA HARD STOP PLACED] Submitting Real Stop-Loss Order on Delta at {initial_sl:.2f}")
+                self.client.cancel_all_orders(self.symbol)
+                self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "buy", stop_price=initial_sl)
+                self.last_exchange_stop_price = initial_sl
             else:
                 logger.error(f"SELL order failed to execute on Delta Exchange: {res.get('error')}")
                 self.strategy.reset_state()
@@ -136,13 +169,17 @@ class StandaloneBot:
             if existing_size > 0:
                 logger.info(f"Exiting LONG position on {self.symbol}...")
                 self.client.close_position(self.symbol)
+            self.client.cancel_all_orders(self.symbol)
             self.strategy.reset_state()
+            self.last_exchange_stop_price = None
 
         elif action == "EXIT_SHORT":
             if existing_size < 0:
                 logger.info(f"Exiting SHORT position on {self.symbol}...")
                 self.client.close_position(self.symbol)
+            self.client.cancel_all_orders(self.symbol)
             self.strategy.reset_state()
+            self.last_exchange_stop_price = None
 
     def run_cycle(self):
         """Runs a single evaluation cycle with real-time profit protection & closed-bar entries."""
@@ -150,24 +187,28 @@ class StandaloneBot:
         if df is None or len(df) < 30:
             return
 
-        # 1. REAL-TIME INTRA-CANDLE EXIT CHECK (Runs every 1-3 seconds without waiting for candle close)
+        # 1. REAL-TIME INTRA-CANDLE EXIT & TRAILING STOP SYNC (Runs every 1-2 seconds)
+        atr_series = self.strategy.calculate_atr(df, length=config.ATR_LENGTH)
+        latest_atr = float(atr_series.iloc[-1]) if not atr_series.empty else 8.0
+
         if config.ENABLE_INTRA_CANDLE_EXIT and self.strategy.position_state != 0:
             live_price = float(df["close"].iloc[-1])
-            atr_series = self.strategy.calculate_atr(df, length=config.ATR_LENGTH)
-            latest_atr = float(atr_series.iloc[-1]) if not atr_series.empty else 0
 
             rt_signal = self.strategy.check_realtime_exit(live_price, latest_atr)
             if rt_signal and rt_signal.action != "NONE":
                 logger.info(f"[REAL-TIME PROFIT LOCK] {rt_signal.action} -> {rt_signal.reason} (Price: {live_price:.2f})")
-                self.execute_signal(rt_signal)
+                self.execute_signal(rt_signal, current_atr=latest_atr)
                 return
+            else:
+                # Keep real stop order on Delta Exchange synced with trailing stop / breakeven
+                self.sync_exchange_trailing_stop(latest_atr)
 
         # 2. REAL-TIME LIVE ENTRY CHECK (Runs every 1-2 seconds when flat - No 60s delay!)
         if config.ENABLE_LIVE_ENTRIES and self.strategy.position_state == 0:
             live_entry_sig = self.strategy.get_live_signal(df)
             if live_entry_sig and live_entry_sig.action in ("BUY", "SELL"):
                 logger.info(f"[REAL-TIME LIVE ENTRY] {live_entry_sig.action} -> {live_entry_sig.reason} (Price: {live_entry_sig.price:.2f})")
-                self.execute_signal(live_entry_sig)
+                self.execute_signal(live_entry_sig, current_atr=latest_atr)
                 return
 
         # 3. CONFIRMED CANDLE CLOSE STRATEGY EVALUATION (Runs on every completed bar)
@@ -192,7 +233,7 @@ class StandaloneBot:
         )
 
         if signal.action != "NONE":
-            self.execute_signal(signal)
+            self.execute_signal(signal, current_atr=latest_atr)
 
     def start(self):
         """Starts the infinite polling loop."""

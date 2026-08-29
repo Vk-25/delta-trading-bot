@@ -294,13 +294,58 @@ class DeltaExchangeClient:
         abs_size = abs(int(current_size))
 
         logger.info(f"Closing existing {'LONG' if current_size > 0 else 'SHORT'} position of {abs_size} contracts on {symbol}...")
-        return self.place_order(
+        res = self.place_order(
             symbol=symbol,
             size=abs_size,
             side=close_side,
             order_type="market_order",
             reduce_only=True
         )
+        self.cancel_all_orders(symbol)
+        return res
+
+    def place_stop_order(
+        self,
+        symbol: str,
+        size: int,
+        side: str,
+        stop_price: float,
+        stop_order_type: str = "stop_loss_order"
+    ) -> Dict[str, Any]:
+        """
+        Places a real Stop-Loss or Take-Profit order directly on Delta Exchange's order book.
+        """
+        product_id = self.get_product_id(symbol)
+        if not product_id:
+            return {"success": False, "error": f"Symbol not found: {symbol}"}
+
+        payload = {
+            "product_id": product_id,
+            "size": int(size),
+            "side": side.lower().strip(),
+            "order_type": "stop_market_order",
+            "stop_price": str(round(stop_price, 2)),
+            "stop_order_type": stop_order_type,
+            "reduce_only": True
+        }
+        logger.info(f"Submitting {stop_order_type.upper()} ({side.upper()}) for {size} {symbol} at stop price {stop_price:.2f} on Delta...")
+        return self._request("POST", "/v2/orders", payload=payload)
+
+    def cancel_all_orders(self, symbol: str) -> Dict[str, Any]:
+        """Cancels all open orders (including stop-loss orders) for a symbol."""
+        product_id = self.get_product_id(symbol)
+        if not product_id:
+            return {"success": False, "error": f"Symbol not found: {symbol}"}
+
+        return self._request("DELETE", "/v2/orders/all", payload={"product_id": product_id})
+
+    def get_open_orders(self, symbol: str) -> Dict[str, Any]:
+        """Fetches active open orders for a symbol."""
+        product_id = self.get_product_id(symbol)
+        if not product_id:
+            return {"success": False, "error": f"Symbol not found: {symbol}"}
+
+        return self._request("GET", "/v2/orders", params={"product_id": product_id, "state": "open"})
 
     # =========================================================================
     # CANDLES & MARKET DATA (FOR STANDALONE BOT)
