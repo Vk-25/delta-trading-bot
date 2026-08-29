@@ -611,17 +611,154 @@ class StrategyEngine:
         return results
 
     def get_latest_signal(self, df: pd.DataFrame) -> SignalResult:
-        """Processes candle DataFrame and returns the latest signal."""
-        results = self.process_candles(df)
-        if results:
-            return results[-1]
+        """Processes candle DataFrame for the current live state without wiping state."""
+        data = self.compute_indicator_dataframe(df)
+        if len(data) < 2:
+            return SignalResult(
+                action="NONE",
+                reason="Insufficient data",
+                price=0.0,
+                position_state=self.position_state,
+                entry_price=self.entry_price,
+                highest_price=self.highest_price,
+                lowest_price=self.lowest_price,
+                metrics={}
+            )
+
+        i = len(data) - 1
+        prev_high = float(data['high'].iloc[i - 1])
+        prev_low = float(data['low'].iloc[i - 1])
+        prev_close = float(data['close'].iloc[i - 1])
+        prev_entry_ema = float(data['entry_ema'].iloc[i - 1])
+
+        curr_high = float(data['high'].iloc[i])
+        curr_low = float(data['low'].iloc[i])
+        curr_close = float(data['close'].iloc[i])
+        curr_entry_ema = float(data['entry_ema'].iloc[i])
+        curr_exit_ema = float(data['exit_ema'].iloc[i])
+        curr_rsi = float(data['rsi'].iloc[i])
+        curr_atr = float(data['atr'].iloc[i])
+        curr_macd_line = float(data['macd_line'].iloc[i])
+        curr_macd_signal = float(data['macd_signal'].iloc[i])
+
+        ema_cutting_candle = (prev_high >= prev_entry_ema) and (prev_low <= prev_entry_ema)
+
+        raw_buy = False
+        raw_sell = False
+
+        if ema_cutting_candle:
+            break_high = curr_high > prev_high
+            break_low = curr_low < prev_low
+
+            if break_high and break_low:
+                if curr_close > prev_close:
+                    raw_buy = True
+                elif curr_close < prev_close:
+                    raw_sell = True
+            elif break_high:
+                raw_buy = True
+            elif break_low:
+                raw_sell = True
+
+        action = "NONE"
+        reason = ""
+        stop_loss = None
+
+        # If currently in a Long position
+        if self.position_state == 1:
+            if self.highest_price is None:
+                self.highest_price = curr_high
+            else:
+                self.highest_price = max(self.highest_price, curr_high)
+
+            ema_weak = curr_close < curr_exit_ema
+            rsi_weak = curr_rsi < 50
+            macd_weak = curr_macd_line < curr_macd_signal
+            structure_weak = curr_close < prev_low
+            long_score = int(ema_weak) + int(rsi_weak) + int(macd_weak) + int(structure_weak)
+
+            smart_exit = self.enable_smart_exit and (long_score >= self.exit_confirmations)
+            opposite_exit = self.exit_on_opposite and raw_sell
+
+            if self.entry_price:
+                profit_atr = (curr_close - self.entry_price) / curr_atr if curr_atr > 0 else 0
+                emergency_exit = self.enable_emergency and (profit_atr <= -self.emergency_atr)
+            else:
+                emergency_exit = False
+
+            if smart_exit:
+                action = "EXIT_LONG"
+                reason = f"SmartExit(score={long_score}/{self.exit_confirmations})"
+            elif opposite_exit:
+                action = "EXIT_LONG"
+                reason = "OppositeSignal(SELL)"
+            elif emergency_exit:
+                action = "EXIT_LONG"
+                reason = "EmergencyLoss"
+
+        # If currently in a Short position
+        elif self.position_state == -1:
+            if self.lowest_price is None:
+                self.lowest_price = curr_low
+            else:
+                self.lowest_price = min(self.lowest_price, curr_low)
+
+            ema_weak = curr_close > curr_exit_ema
+            rsi_weak = curr_rsi > 50
+            macd_weak = curr_macd_line > curr_macd_signal
+            structure_weak = curr_close > prev_high
+            short_score = int(ema_weak) + int(rsi_weak) + int(macd_weak) + int(structure_weak)
+
+            smart_exit = self.enable_smart_exit and (short_score >= self.exit_confirmations)
+            opposite_exit = self.exit_on_opposite and raw_buy
+
+            if self.entry_price:
+                profit_atr = (self.entry_price - curr_close) / curr_atr if curr_atr > 0 else 0
+                emergency_exit = self.enable_emergency and (profit_atr <= -self.emergency_atr)
+            else:
+                emergency_exit = False
+
+            if smart_exit:
+                action = "EXIT_SHORT"
+                reason = f"SmartExit(score={short_score}/{self.exit_confirmations})"
+            elif opposite_exit:
+                action = "EXIT_SHORT"
+                reason = "OppositeSignal(BUY)"
+            elif emergency_exit:
+                action = "EXIT_SHORT"
+                reason = "EmergencyLoss"
+
+        # If Flat, evaluate New Entries
+        elif self.position_state == 0:
+            if raw_buy:
+                action = "BUY"
+                reason = "EMA Cut Breakout High"
+                stop_loss = prev_low
+            elif raw_sell:
+                action = "SELL"
+                reason = "EMA Cut Breakout Low"
+                stop_loss = prev_high
+
         return SignalResult(
-            action="NONE",
-            reason="Insufficient data",
-            price=0.0,
-            position_state=0,
-            entry_price=None,
-            highest_price=None,
-            lowest_price=None,
-            metrics={}
+            action=action,
+            reason=reason,
+            price=curr_close,
+            position_state=self.position_state,
+            entry_price=self.entry_price,
+            highest_price=self.highest_price,
+            lowest_price=self.lowest_price,
+            metrics={
+                "entry_ema": curr_entry_ema,
+                "exit_ema": curr_exit_ema,
+                "rsi": curr_rsi,
+                "atr": curr_atr,
+                "macd_line": curr_macd_line,
+                "macd_signal": curr_macd_signal,
+                "raw_buy": raw_buy,
+                "raw_sell": raw_sell,
+                "ema_cutting_candle": ema_cutting_candle,
+                "stop_loss": stop_loss,
+                "prev_high": prev_high,
+                "prev_low": prev_low
+            }
         )

@@ -253,12 +253,20 @@ class StandaloneBot:
             )
             # Only sync position if the order actually succeeded on Delta Exchange
             if res.get("success"):
-                entry_p = float(res.get("result", {}).get("avg_fill_price") or signal.metrics.get("current_price") or 0)
+                entry_p = float(
+                    res.get("result", {}).get("avg_fill_price") or
+                    res.get("result", {}).get("average_fill_price") or
+                    res.get("result", {}).get("price") or
+                    signal.price or
+                    signal.metrics.get("live_price") or
+                    signal.metrics.get("current_price") or
+                    0.0
+                )
                 self.strategy.sync_position(config.ORDER_SIZE, entry_p if entry_p > 0 else None)
                 
                 # Stop Loss strictly placed at Low of EMA cutting candle
                 explicit_sl = signal.metrics.get("stop_loss")
-                if explicit_sl is not None and float(explicit_sl) > 0:
+                if explicit_sl is not None and float(explicit_sl) > (entry_p * 0.5):
                     initial_sl = float(explicit_sl)
                 else:
                     initial_sl = entry_p - (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 8.0)
@@ -287,12 +295,20 @@ class StandaloneBot:
             )
             # Only sync position if the order actually succeeded on Delta Exchange
             if res.get("success"):
-                entry_p = float(res.get("result", {}).get("avg_fill_price") or signal.metrics.get("current_price") or 0)
+                entry_p = float(
+                    res.get("result", {}).get("avg_fill_price") or
+                    res.get("result", {}).get("average_fill_price") or
+                    res.get("result", {}).get("price") or
+                    signal.price or
+                    signal.metrics.get("live_price") or
+                    signal.metrics.get("current_price") or
+                    0.0
+                )
                 self.strategy.sync_position(-config.ORDER_SIZE, entry_p if entry_p > 0 else None)
                 
                 # Stop Loss strictly placed at High of EMA cutting candle
                 explicit_sl = signal.metrics.get("stop_loss")
-                if explicit_sl is not None and float(explicit_sl) > 0:
+                if explicit_sl is not None and float(explicit_sl) > (entry_p * 0.5):
                     initial_sl = float(explicit_sl)
                 else:
                     initial_sl = entry_p + (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 8.0)
