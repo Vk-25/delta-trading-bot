@@ -1,28 +1,154 @@
 import os
 import time
+import json
+import datetime
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import pandas as pd
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from bot.config import config
 from bot.delta_client import DeltaExchangeClient
 from bot.strategy_engine import StrategyEngine, SignalResult
 from bot.utils import logger
+from bot.dashboard import DASHBOARD_HTML
+
+global_bot_instance: Optional['StandaloneBot'] = None
+recent_standalone_logs: List[Dict[str, Any]] = []
+
+def log_standalone_event(action: str, reason: str, price: float, stop_loss: Optional[float] = None):
+    now_ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
+    event = {
+        "time": now_ist.strftime("%H:%M:%S IST"),
+        "action": action,
+        "reason": reason,
+        "price": price,
+        "stop_loss": stop_loss
+    }
+    recent_standalone_logs.insert(0, event)
+    if len(recent_standalone_logs) > 50:
+        recent_standalone_logs.pop()
 
 class RenderHealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "application/json")
-        self.end_headers()
-        self.wfile.write(b'{"status":"healthy","service":"Delta Standalone Bot","state":"active"}')
-        
+        if self.path == "/" or self.path == "/dashboard":
+            self.send_response(200)
+            self.send_header("Content-type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(DASHBOARD_HTML.encode("utf-8"))
+            return
+
+        elif self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"healthy","service":"Delta Standalone Bot","state":"active"}')
+            return
+
+        elif self.path == "/api/dashboard":
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+
+            if not global_bot_instance:
+                self.wfile.write(json.dumps({"status": "starting"}).encode("utf-8"))
+                return
+
+            try:
+                bot = global_bot_instance
+                # 1. Balances
+                balances_res = bot.client.get_wallet_balances()
+                available_usd = 0.0
+                total_usd = 0.0
+                if balances_res.get("success") and isinstance(balances_res.get("result"), list):
+                    for b in balances_res["result"]:
+                        available_usd += float(b.get("available_balance", 0))
+                        total_usd += float(b.get("balance", 0))
+
+                # 2. Position
+                pos = bot.client.get_position_for_symbol(bot.symbol) or {}
+
+                # 3. Open orders on Delta
+                orders_res = bot.client.get_open_orders(bot.symbol)
+                open_orders = orders_res.get("result", []) if isinstance(orders_res.get("result"), list) else []
+
+                # 4. Market indicators
+                df = bot.fetch_ohlcv_dataframe()
+                market_info = {"price": 0.0, "ema": 0.0, "rsi": 0.0, "atr": 0.0, "slope": "--"}
+                if df is not None and len(df) > 25:
+                    close_s = df["close"]
+                    live_p = float(close_s.iloc[-1])
+                    ema_s = close_s.ewm(span=config.ENTRY_EMA_LENGTH, adjust=False).mean()
+                    live_ema = float(ema_s.iloc[-1])
+                    prev_ema = float(ema_s.iloc[-2])
+                    slope_str = "RISING ↗" if live_ema >= prev_ema else "FALLING ↘"
+
+                    rsi_s = bot.strategy.calculate_rsi(close_s, config.RSI_LENGTH)
+                    atr_s = bot.strategy.calculate_atr(df, config.ATR_LENGTH)
+
+                    market_info = {
+                        "price": live_p,
+                        "ema": live_ema,
+                        "rsi": float(rsi_s.iloc[-1]) if not rsi_s.empty else 0.0,
+                        "atr": float(atr_s.iloc[-1]) if not atr_s.empty else 0.0,
+                        "slope": slope_str
+                    }
+
+                active_sl = bot.last_exchange_stop_price or 0.0
+                if active_sl == 0.0:
+                    for o in open_orders:
+                        if o.get("stop_price"):
+                            active_sl = float(o.get("stop_price"))
+                            break
+
+                payload = {
+                    "symbol": bot.symbol,
+                    "timeframe": bot.timeframe,
+                    "leverage": config.LEVERAGE,
+                    "balances": {
+                        "available_usd": available_usd,
+                        "total_usd": total_usd
+                    },
+                    "position": pos,
+                    "open_orders": open_orders,
+                    "active_stop_price": active_sl,
+                    "breakeven_locked": bot.strategy.breakeven_locked,
+                    "market": market_info,
+                    "recent_logs": recent_standalone_logs
+                }
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+            except Exception as e:
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.path == "/api/emergency_close":
+            if global_bot_instance:
+                global_bot_instance.client.close_position(global_bot_instance.symbol)
+                global_bot_instance.client.cancel_all_orders(global_bot_instance.symbol)
+                global_bot_instance.strategy.reset_state()
+                global_bot_instance.last_exchange_stop_price = None
+                log_standalone_event("EMERGENCY_CLOSE", "Dashboard Button", 0.0)
+
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"success":true,"message":"Position closed and all orders cancelled."}')
+            return
+        else:
+            self.send_response(404)
+            self.end_headers()
+
     def log_message(self, format, *args):
         pass  # Suppress noisy healthcheck logs
 
 def start_render_health_server(port: int):
     try:
         server = HTTPServer(("0.0.0.0", port), RenderHealthHandler)
-        logger.info(f"Render Web Service port bound successfully on 0.0.0.0:{port}")
+        logger.info(f"Render Dashboard & Health server bound on 0.0.0.0:{port}")
         server.serve_forever()
     except Exception as e:
         logger.warning(f"Could not bind health port {port}: {e}")
@@ -34,6 +160,8 @@ class StandaloneBot:
     and executes orders directly on candle close.
     """
     def __init__(self, symbol: Optional[str] = None, timeframe: Optional[str] = None):
+        global global_bot_instance
+        global_bot_instance = self
         self.symbol = (symbol or config.TRADING_SYMBOL).strip().upper()
         self.timeframe = timeframe or config.TIMEFRAME
         self.poll_interval = config.POLL_INTERVAL_SECONDS
@@ -140,6 +268,7 @@ class StandaloneBot:
                 self.client.cancel_all_orders(self.symbol)
                 self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "sell", stop_price=initial_sl)
                 self.last_exchange_stop_price = initial_sl
+                log_standalone_event("BUY", signal.reason, entry_p, initial_sl)
             else:
                 logger.error(f"BUY order failed to execute on Delta Exchange: {res.get('error')}")
                 self.strategy.reset_state()
@@ -173,6 +302,7 @@ class StandaloneBot:
                 self.client.cancel_all_orders(self.symbol)
                 self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "buy", stop_price=initial_sl)
                 self.last_exchange_stop_price = initial_sl
+                log_standalone_event("SELL", signal.reason, entry_p, initial_sl)
             else:
                 logger.error(f"SELL order failed to execute on Delta Exchange: {res.get('error')}")
                 self.strategy.reset_state()
@@ -184,6 +314,7 @@ class StandaloneBot:
             self.client.cancel_all_orders(self.symbol)
             self.strategy.reset_state()
             self.last_exchange_stop_price = None
+            log_standalone_event("EXIT_LONG", signal.reason, signal.price)
 
         elif action == "EXIT_SHORT":
             if existing_size < 0:
@@ -192,6 +323,7 @@ class StandaloneBot:
             self.client.cancel_all_orders(self.symbol)
             self.strategy.reset_state()
             self.last_exchange_stop_price = None
+            log_standalone_event("EXIT_SHORT", signal.reason, signal.price)
 
     def run_cycle(self):
         """Runs a single evaluation cycle with real-time profit protection & closed-bar entries."""
