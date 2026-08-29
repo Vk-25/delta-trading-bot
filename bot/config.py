@@ -30,7 +30,7 @@ class BotConfig:
     ENTRY_EMA_LENGTH: int = int(os.getenv("ENTRY_EMA_LENGTH", "21"))
     ENABLE_SMART_EXIT: bool = os.getenv("ENABLE_SMART_EXIT", "true").lower() in ("true", "1", "yes")
     EXIT_ON_OPPOSITE: bool = os.getenv("EXIT_ON_OPPOSITE", "true").lower() in ("true", "1", "yes")
-    EXIT_CONFIRMATIONS: int = int(os.getenv("EXIT_CONFIRMATIONS", "2"))
+    EXIT_CONFIRMATIONS: int = int(os.getenv("EXIT_CONFIRMATIONS", "3"))
     EXIT_EMA_LENGTH: int = int(os.getenv("EXIT_EMA_LENGTH", "21"))
     RSI_LENGTH: int = int(os.getenv("RSI_LENGTH", "14"))
     ATR_LENGTH: int = int(os.getenv("ATR_LENGTH", "14"))

@@ -16,7 +16,7 @@ enableTrendContinuation = input.bool(false, "Enable Trend Continuation Re-entrie
 // ---------------- EXIT & CONFIRMATIONS ----------------
 enableSmartExit = input.bool(true, "Enable Smart Exit", group="EXIT & CONFIRMATIONS")
 exitOnOpposite = input.bool(true, "Exit On Opposite Signal", group="EXIT & CONFIRMATIONS")
-exitConfirmations = input.int(2, "Required Exit Confirmations (out of 4)", minval=1, maxval=4, group="EXIT & CONFIRMATIONS")
+exitConfirmations = input.int(3, "Required Exit Confirmations (out of 4, with 21 EMA Violation)", minval=1, maxval=4, group="EXIT & CONFIRMATIONS")
 
 exitEMALength = input.int(21, "Exit EMA Length", minval=1, group="EXIT INDICATORS")
 rsiLength = input.int(14, "RSI Length", minval=1, group="EXIT INDICATORS")
@@ -69,14 +69,14 @@ if emaCuttingCandle
         rawSell := true
 else if enableTrendContinuation
     bool uptrend = close > entryEMA and exitRSI >= 50 and macdLine >= macdSignal
-    downtrend = close < entryEMA and exitRSI <= 50 and macdLine <= macdSignal
+    bool downtrend = close < entryEMA and exitRSI <= 50 and macdLine <= macdSignal
     if uptrend and high > high[1]
         rawBuy := true
     else if downtrend and low < low[1]
         rawSell := true
 
 // ============================================================================
-// POSITION STATE MACHINE
+// POSITION STATE MACHINE (MASTER UNIFIED DEFENSE & EXIT)
 // ============================================================================
 
 var int positionState = 0
@@ -95,13 +95,14 @@ bool newSell = false
 if positionState == 1
     highestPrice := na(highestPrice) ? high : math.max(highestPrice, high)
 
+    // Master Unified Confirmations: Requires closing below 21 EMA + 3 confirmations
     bool emaWeak = close < exitEMA
     bool rsiWeak = exitRSI < 50
     bool macdWeak = macdLine < macdSignal
     bool structureWeak = close < low[1]
 
     int longScore = (emaWeak ? 1 : 0) + (rsiWeak ? 1 : 0) + (macdWeak ? 1 : 0) + (structureWeak ? 1 : 0)
-    bool smartExit = enableSmartExit and longScore >= exitConfirmations
+    bool smartExit = enableSmartExit and emaWeak and (longScore >= exitConfirmations)
     bool oppositeExit = exitOnOpposite and rawSell
 
     float profitATR = (close - entryPrice) / exitATR
@@ -129,13 +130,14 @@ if positionState == 1
 if positionState == -1
     lowestPrice := na(lowestPrice) ? low : math.min(lowestPrice, low)
 
+    // Master Unified Confirmations: Requires closing above 21 EMA + 3 confirmations
     bool emaWeak = close > exitEMA
     bool rsiWeak = exitRSI > 50
     bool macdWeak = macdLine > macdSignal
     bool structureWeak = close > high[1]
 
     int shortScore = (emaWeak ? 1 : 0) + (rsiWeak ? 1 : 0) + (macdWeak ? 1 : 0) + (structureWeak ? 1 : 0)
-    bool smartExit = enableSmartExit and shortScore >= exitConfirmations
+    bool smartExit = enableSmartExit and emaWeak and (shortScore >= exitConfirmations)
     bool oppositeExit = exitOnOpposite and rawBuy
 
     float profitATR = (entryPrice - close) / exitATR
@@ -221,7 +223,7 @@ plot(positionState != 0 ? entryPrice : na, title="Entry Price", color=color.rgb(
 var table hud = table.new(position.top_right, 2, 6, bgcolor=color.rgb(15, 23, 42, 20), border_color=color.rgb(255, 255, 255, 15), border_width=1)
 if barstate.islast
     table.cell(hud, 0, 0, "Timeframe", text_color=color.rgb(148, 163, 184), text_size=size.small)
-    table.cell(hud, 1, 0, "15m Precision", text_color=color.rgb(6, 182, 212), text_size=size.small)
+    table.cell(hud, 1, 0, "15m Master Defense", text_color=color.rgb(6, 182, 212), text_size=size.small)
 
     table.cell(hud, 0, 1, "Position", text_color=color.rgb(148, 163, 184), text_size=size.small)
     string posStr = positionState == 1 ? "LONG 🟢" : (positionState == -1 ? "SHORT 🔴" : "FLAT ⚪")

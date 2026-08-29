@@ -454,7 +454,7 @@ class StrategyEngine:
                 else:
                     self.highest_price = max(self.highest_price, curr_high)
                     
-                # Exit Confirmations (Weakness score out of 4)
+                # Exit Confirmations (Master Unified Exit: Mandatory 21 EMA line close violation + multi-confirmations)
                 ema_weak = curr_close < curr_exit_ema
                 rsi_weak = curr_rsi < 50
                 macd_weak = curr_macd_line < curr_macd_signal
@@ -462,9 +462,10 @@ class StrategyEngine:
                 
                 long_score = int(ema_weak) + int(rsi_weak) + int(macd_weak) + int(structure_weak)
                 
-                smart_exit = self.enable_smart_exit and (long_score >= self.exit_confirmations)
+                # Smart exit strictly requires candle closing below 21 EMA + score >= exit_confirmations
+                smart_exit = self.enable_smart_exit and ema_weak and (long_score >= self.exit_confirmations)
                 if smart_exit:
-                    exit_reasons.append(f"SmartExit(score={long_score}/{self.exit_confirmations})")
+                    exit_reasons.append(f"SmartExit(ema_break+score={long_score}/{self.exit_confirmations})")
                     
                 opposite_exit = self.exit_on_opposite and raw_sell
                 if opposite_exit:
@@ -500,7 +501,7 @@ class StrategyEngine:
                 else:
                     self.lowest_price = min(self.lowest_price, curr_low)
                     
-                # Exit Confirmations (Weakness score out of 4)
+                # Exit Confirmations (Master Unified Exit: Mandatory 21 EMA line close violation + multi-confirmations)
                 ema_weak = curr_close > curr_exit_ema
                 rsi_weak = curr_rsi > 50
                 macd_weak = curr_macd_line > curr_macd_signal
@@ -508,9 +509,10 @@ class StrategyEngine:
                 
                 short_score = int(ema_weak) + int(rsi_weak) + int(macd_weak) + int(structure_weak)
                 
-                smart_exit = self.enable_smart_exit and (short_score >= self.exit_confirmations)
+                # Smart exit strictly requires candle closing above 21 EMA + score >= exit_confirmations
+                smart_exit = self.enable_smart_exit and ema_weak and (short_score >= self.exit_confirmations)
                 if smart_exit:
-                    exit_reasons.append(f"SmartExit(score={short_score}/{self.exit_confirmations})")
+                    exit_reasons.append(f"SmartExit(ema_break+score={short_score}/{self.exit_confirmations})")
                     
                 opposite_exit = self.exit_on_opposite and raw_buy
                 if opposite_exit:
@@ -675,13 +677,14 @@ class StrategyEngine:
             else:
                 self.highest_price = max(self.highest_price, curr_high)
 
+            # Master Unified Exit: Mandatory 21 EMA line close violation + multi-confirmations
             ema_weak = curr_close < curr_exit_ema
             rsi_weak = curr_rsi < 50
             macd_weak = curr_macd_line < curr_macd_signal
             structure_weak = curr_close < prev_low
             long_score = int(ema_weak) + int(rsi_weak) + int(macd_weak) + int(structure_weak)
 
-            smart_exit = self.enable_smart_exit and (long_score >= self.exit_confirmations)
+            smart_exit = self.enable_smart_exit and ema_weak and (long_score >= self.exit_confirmations)
             opposite_exit = self.exit_on_opposite and raw_sell
 
             if self.entry_price:
@@ -692,7 +695,7 @@ class StrategyEngine:
 
             if smart_exit:
                 action = "EXIT_LONG"
-                reason = f"SmartExit(score={long_score}/{self.exit_confirmations})"
+                reason = f"SmartExit(ema_break+score={long_score}/{self.exit_confirmations})"
             elif opposite_exit:
                 action = "EXIT_LONG"
                 reason = "OppositeSignal(SELL)"
@@ -707,13 +710,14 @@ class StrategyEngine:
             else:
                 self.lowest_price = min(self.lowest_price, curr_low)
 
+            # Master Unified Exit: Mandatory 21 EMA line close violation + multi-confirmations
             ema_weak = curr_close > curr_exit_ema
             rsi_weak = curr_rsi > 50
             macd_weak = curr_macd_line > curr_macd_signal
             structure_weak = curr_close > prev_high
             short_score = int(ema_weak) + int(rsi_weak) + int(macd_weak) + int(structure_weak)
 
-            smart_exit = self.enable_smart_exit and (short_score >= self.exit_confirmations)
+            smart_exit = self.enable_smart_exit and ema_weak and (short_score >= self.exit_confirmations)
             opposite_exit = self.exit_on_opposite and raw_buy
 
             if self.entry_price:
@@ -724,7 +728,7 @@ class StrategyEngine:
 
             if smart_exit:
                 action = "EXIT_SHORT"
-                reason = f"SmartExit(score={short_score}/{self.exit_confirmations})"
+                reason = f"SmartExit(ema_break+score={short_score}/{self.exit_confirmations})"
             elif opposite_exit:
                 action = "EXIT_SHORT"
                 reason = "OppositeSignal(BUY)"
