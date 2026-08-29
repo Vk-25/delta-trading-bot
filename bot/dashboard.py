@@ -145,21 +145,40 @@ DASHBOARD_HTML = """
         /* GRID LAYOUTS */
         .grid-kpi {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 1.25rem;
-            margin-bottom: 1.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.25rem;
         }
 
+        .grid-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .grid-split {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.25rem;
+            margin-bottom: 1.25rem;
+        }
+
+        @media (max-width: 900px) {
+            .grid-split {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* CARDS */
         .card {
             background: var(--bg-card);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
             border: 1px solid var(--border);
-            border-radius: 16px;
+            border-radius: 14px;
             padding: 1.25rem;
             transition: all 0.2s ease;
-            position: relative;
-            overflow: hidden;
         }
 
         .card:hover {
@@ -169,142 +188,140 @@ DASHBOARD_HTML = """
 
         .card-label {
             font-size: 0.75rem;
-            font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.5px;
             color: var(--text-muted);
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.4rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
         .card-value {
-            font-size: 1.75rem;
+            font-size: 1.6rem;
             font-weight: 700;
-            color: #fff;
-            line-height: 1.2;
+            letter-spacing: -0.5px;
             margin-bottom: 0.25rem;
         }
 
         .card-sub {
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             color: var(--text-muted);
         }
 
         .positive {
-            color: var(--emerald) !important;
-        }
-        .negative {
-            color: var(--crimson) !important;
+            color: var(--emerald);
         }
 
-        .badge-pill {
-            display: inline-block;
-            font-size: 0.75rem;
-            padding: 0.2rem 0.5rem;
-            border-radius: 6px;
-            font-weight: 600;
+        .negative {
+            color: var(--crimson);
         }
+
+        /* BADGES */
+        .badge-pill {
+            padding: 0.2rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            display: inline-block;
+        }
+
         .badge-buy {
             background: rgba(16, 185, 129, 0.15);
             color: var(--emerald);
             border: 1px solid rgba(16, 185, 129, 0.3);
         }
+
         .badge-sell {
             background: rgba(244, 63, 94, 0.15);
             color: var(--crimson);
             border: 1px solid rgba(244, 63, 94, 0.3);
         }
+
         .badge-flat {
             background: rgba(148, 163, 184, 0.15);
             color: var(--text-muted);
-            border: 1px solid rgba(148, 163, 184, 0.3);
+            border: 1px solid rgba(148, 163, 184, 0.2);
         }
 
-        /* MAIN CONTENT SPLIT */
-        .grid-split {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 1.25rem;
-            margin-bottom: 1.5rem;
+        .badge-fee {
+            background: rgba(245, 158, 11, 0.15);
+            color: var(--amber);
+            border: 1px solid rgba(245, 158, 11, 0.3);
         }
 
-        @media (max-width: 950px) {
-            .grid-split {
-                grid-template-columns: 1fr;
-            }
-        }
-
-        .section-header {
-            font-size: 1.05rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        /* POSITION HERO */
+        /* TELEMETRY BOX */
         .position-box {
-            background: rgba(0, 0, 0, 0.25);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 1rem;
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(2, 1fr);
             gap: 0.75rem;
+            background: rgba(0, 0, 0, 0.2);
+            padding: 1rem;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
         }
 
-        .pos-item {
-            display: flex;
-            flex-direction: column;
-        }
         .pos-item-title {
             font-size: 0.7rem;
             color: var(--text-muted);
             text-transform: uppercase;
         }
+
         .pos-item-value {
-            font-size: 1rem;
+            font-size: 0.95rem;
             font-weight: 600;
-            margin-top: 0.2rem;
+            margin-top: 0.15rem;
         }
 
-        /* TELEMETRY METERS */
         .telemetry-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
-            gap: 0.75rem;
+            gap: 0.5rem;
+            margin-top: 1rem;
         }
+
         .tele-card {
-            background: rgba(0, 0, 0, 0.25);
+            background: rgba(255, 255, 255, 0.02);
             border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 0.85rem;
+            padding: 0.6rem;
+            border-radius: 8px;
             text-align: center;
         }
+
         .tele-title {
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             color: var(--text-muted);
             text-transform: uppercase;
         }
+
         .tele-val {
-            font-size: 1.15rem;
+            font-size: 0.95rem;
             font-weight: 700;
-            margin-top: 0.25rem;
+            margin-top: 0.2rem;
         }
 
-        /* TABLE */
+        /* TABLES */
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            font-weight: 700;
+            font-size: 1rem;
+        }
+
         .table-wrap {
             overflow-x: auto;
         }
+
         table {
             width: 100%;
             border-collapse: collapse;
             font-size: 0.85rem;
             text-align: left;
         }
+
         th {
             background: rgba(255, 255, 255, 0.02);
             color: var(--text-muted);
@@ -314,10 +331,12 @@ DASHBOARD_HTML = """
             text-transform: uppercase;
             font-size: 0.7rem;
         }
+
         td {
             padding: 0.75rem 1rem;
             border-bottom: 1px solid rgba(255, 255, 255, 0.04);
         }
+
         tr:hover td {
             background: rgba(255, 255, 255, 0.02);
         }
@@ -334,14 +353,17 @@ DASHBOARD_HTML = """
             cursor: pointer;
             transition: all 0.2s ease;
         }
+
         .btn:hover {
             background: rgba(255, 255, 255, 0.1);
         }
+
         .btn-danger {
             background: rgba(244, 63, 94, 0.15);
             color: var(--crimson);
             border-color: rgba(244, 63, 94, 0.3);
         }
+
         .btn-danger:hover {
             background: rgba(244, 63, 94, 0.25);
         }
@@ -369,7 +391,7 @@ DASHBOARD_HTML = """
             </div>
         </header>
 
-        <!-- KPI CARDS -->
+        <!-- KPI CARDS (BALANCES & POSITIONS) -->
         <div class="grid-kpi">
             <!-- WALLET BALANCE -->
             <div class="card">
@@ -412,6 +434,49 @@ DASHBOARD_HTML = """
             </div>
         </div>
 
+        <!-- PERFORMANCE & PNL SUMMARY BAR -->
+        <div class="grid-stats">
+            <!-- TOTAL REALIZED NET PNL -->
+            <div class="card" style="border-left: 3px solid var(--emerald);">
+                <div class="card-label">
+                    <span>Total Realized Net PnL</span>
+                    <span class="mono" style="color: var(--emerald);">After Fees</span>
+                </div>
+                <div class="card-value mono" id="total-net-pnl">$0.0000</div>
+                <div class="card-sub mono" id="total-net-pnl-inr">≈ ₹0.00 INR Net Profit</div>
+            </div>
+
+            <!-- WIN RATE & PROFITABLE/LOSS TRADES -->
+            <div class="card" style="border-left: 3px solid var(--cyan);">
+                <div class="card-label">
+                    <span>Win Rate & Outcomes</span>
+                    <span id="winrate-badge" class="badge-pill badge-buy mono">0.0% Win</span>
+                </div>
+                <div class="card-value mono" id="trade-outcomes">0 Won / 0 Lost</div>
+                <div class="card-sub mono" id="total-trades-count">0 Total Completed Trades</div>
+            </div>
+
+            <!-- TOTAL EXCHANGE FEES -->
+            <div class="card" style="border-left: 3px solid var(--amber);">
+                <div class="card-label">
+                    <span>Total Fees Paid</span>
+                    <span class="badge-pill badge-fee mono">$0.0143 / trade</span>
+                </div>
+                <div class="card-value mono" style="color: var(--amber);" id="total-fees">$0.0000</div>
+                <div class="card-sub mono" id="total-fees-inr">≈ ₹0.00 INR in Fees</div>
+            </div>
+
+            <!-- GROSS PROFIT / LOSS -->
+            <div class="card" style="border-left: 3px solid var(--violet);">
+                <div class="card-label">
+                    <span>Total Gross PnL</span>
+                    <span class="mono" style="color: var(--violet);">Market Move</span>
+                </div>
+                <div class="card-value mono" id="total-gross-pnl">$0.0000</div>
+                <div class="card-sub mono">Before Exchange Fees</div>
+            </div>
+        </div>
+
         <!-- MAIN SPLIT -->
         <div class="grid-split">
             <!-- POSITION DETAILS & TELEMETRY -->
@@ -449,7 +514,7 @@ DASHBOARD_HTML = """
                 </div>
 
                 <div class="section-header" style="margin-top: 1.25rem;">
-                    <span>⚡ Strategy Indicators (5m Live)</span>
+                    <span>⚡ Strategy Indicators (15m Live)</span>
                 </div>
                 <div class="telemetry-grid mono">
                     <div class="tele-card">
@@ -499,10 +564,10 @@ DASHBOARD_HTML = """
             </div>
         </div>
 
-        <!-- RECENT ACTIVITY LOGS -->
+        <!-- RECENT ACTIVITY LOGS & SIGNAL FEED -->
         <div class="card">
             <div class="section-header">
-                <span>📜 Live Execution & Signal Feed</span>
+                <span>📜 Live Execution & Signal Feed (With PnL & Fees)</span>
                 <span class="mono" style="font-size: 0.75rem; color: var(--emerald);">Auto-updates every 2s</span>
             </div>
 
@@ -512,15 +577,17 @@ DASHBOARD_HTML = """
                         <tr>
                             <th>Time (IST)</th>
                             <th>Action</th>
+                            <th>Execution Price</th>
+                            <th>Gross PnL</th>
+                            <th>Fee (USDT)</th>
+                            <th>Net PnL (USD / INR)</th>
                             <th>Trigger Reason</th>
-                            <th>Price</th>
-                            <th>Stop Loss / Trailing</th>
                             <th>Status</th>
                         </tr>
                     </thead>
                     <tbody id="logs-table-body" class="mono">
                         <tr>
-                            <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">Awaiting trade events...</td>
+                            <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 2rem;">Awaiting trade events...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -529,7 +596,7 @@ DASHBOARD_HTML = """
     </div>
 
     <script>
-        const USD_TO_INR = 86.50;
+        const USD_TO_INR = 87.50;
 
         function updateClock() {
             const now = new Date();
@@ -548,31 +615,30 @@ DASHBOARD_HTML = """
             } catch (e) {
                 console.error("Dashboard fetch error:", e);
                 document.getElementById('connection-status').innerText = "Connecting...";
+                document.getElementById('connection-status').style.color = "var(--amber)";
             }
         }
 
         function renderData(data) {
             document.getElementById('connection-status').innerText = "Delta India Connected";
+            document.getElementById('connection-status').style.color = "var(--emerald)";
 
             // 1. Balances
             const availUsd = data.balances?.available_usd || 0;
             const availInr = availUsd * USD_TO_INR;
             document.getElementById('available-balance').innerText = `$${availUsd.toFixed(2)}`;
-            document.getElementById('inr-balance').innerText = `≈ ₹${availInr.toFixed(2)} INR (Available)`;
+            document.getElementById('inr-balance').innerText = `≈ ₹${availInr.toLocaleString('en-IN', {maximumFractionDigits: 2})} INR (Available)`;
 
-            // 2. Position
+            // 2. Positions
             const pos = data.position || {};
             const size = parseFloat(pos.size || 0);
             const entryPrice = parseFloat(pos.entry_price || 0);
-            const markPrice = parseFloat(pos.mark_price || data.market?.price || 0);
+            const markPrice = data.market?.price || entryPrice;
+            const marginUsed = parseFloat(pos.margin || 0) || (size !== 0 && entryPrice > 0 ? (entryPrice * 0.001 * Math.abs(size)) / 100 : 0);
             const pnlUsd = parseFloat(pos.unrealized_pnl || 0);
             const pnlInr = pnlUsd * USD_TO_INR;
-
-            // Margin & ROI
-            const marginUsed = size !== 0 ? (Math.abs(size) * 0.01 * entryPrice) / 100 : 0;
             const roiPct = marginUsed > 0 ? (pnlUsd / marginUsed) * 100 : 0;
 
-            // Update Position Cards
             const posBadge = document.getElementById('position-badge');
             if (size > 0) {
                 posBadge.className = "badge-pill badge-buy mono";
@@ -591,7 +657,7 @@ DASHBOARD_HTML = """
             document.getElementById('mark-price').innerText = markPrice > 0 ? `$${markPrice.toFixed(2)}` : '--';
             document.getElementById('initial-margin').innerText = marginUsed > 0 ? `$${marginUsed.toFixed(2)} (₹${(marginUsed*USD_TO_INR).toFixed(1)})` : '$0.00';
 
-            // PnL display
+            // Unrealized PnL display
             const pnlElem = document.getElementById('live-pnl');
             const pnlInrElem = document.getElementById('live-pnl-inr');
             const roiBadge = document.getElementById('roi-badge');
@@ -626,13 +692,40 @@ DASHBOARD_HTML = """
             document.getElementById('active-stop-loss').innerText = activeSl > 0 ? `$${activeSl.toFixed(2)}` : 'None (Flat)';
             document.getElementById('trailing-status').innerText = data.breakeven_locked ? '🛡️ Breakeven: LOCKED (+Fee Covered)' : 'Breakeven: Ready at +$2.43';
 
-            // Indicators
+            // 3. Performance Statistics
+            const stats = data.stats || {};
+            const totalNet = stats.total_net_pnl || 0;
+            const totalNetInr = stats.total_net_pnl_inr || 0;
+            const totalGross = stats.total_gross_pnl || 0;
+            const totalFees = stats.total_fees || 0;
+            const winRate = stats.win_rate || 0;
+            const profitableCount = stats.profitable_trades || 0;
+            const lossCount = stats.loss_trades || 0;
+            const totalTrades = stats.total_trades || 0;
+
+            const netPnlElem = document.getElementById('total-net-pnl');
+            netPnlElem.innerText = `${totalNet >= 0 ? '+' : ''}$${totalNet.toFixed(4)}`;
+            netPnlElem.className = totalNet >= 0 ? "card-value mono positive" : "card-value mono negative";
+
+            document.getElementById('total-net-pnl-inr').innerText = `≈ ${totalNetInr >= 0 ? '+' : ''}₹${totalNetInr.toFixed(2)} INR Net Profit`;
+            document.getElementById('trade-outcomes').innerText = `${profitableCount} Won / ${lossCount} Lost`;
+            document.getElementById('total-trades-count').innerText = `${totalTrades} Total Completed Trade${totalTrades === 1 ? '' : 's'}`;
+            
+            const winBadge = document.getElementById('winrate-badge');
+            winBadge.innerText = `${winRate.toFixed(1)}% Win Rate`;
+            winBadge.className = winRate >= 50 ? "badge-pill badge-buy mono" : "badge-pill badge-sell mono";
+
+            document.getElementById('total-fees').innerText = `$${totalFees.toFixed(4)}`;
+            document.getElementById('total-fees-inr').innerText = `≈ ₹${(totalFees * USD_TO_INR).toFixed(2)} INR in Fees`;
+            document.getElementById('total-gross-pnl').innerText = `${totalGross >= 0 ? '+' : ''}$${totalGross.toFixed(4)}`;
+
+            // 4. Indicators
             document.getElementById('val-ema').innerText = data.market?.ema ? data.market.ema.toFixed(2) : '--';
             document.getElementById('val-rsi').innerText = data.market?.rsi ? data.market.rsi.toFixed(1) : '--';
             document.getElementById('val-atr').innerText = data.market?.atr ? `$${data.market.atr.toFixed(2)}` : '--';
             document.getElementById('val-slope').innerText = data.market?.slope || '--';
 
-            // Orders Table
+            // 5. Orders Table
             const ordersTbody = document.getElementById('orders-table-body');
             const orders = data.open_orders || [];
             document.getElementById('orders-count').innerText = `${orders.length} Order${orders.length === 1 ? '' : 's'}`;
@@ -641,7 +734,7 @@ DASHBOARD_HTML = """
                 ordersTbody.innerHTML = orders.map(o => `
                     <tr>
                         <td style="color: var(--cyan);">${o.order_type || 'Stop Market'}</td>
-                        <td style="color: ${o.side === 'buy' ? 'var(--emerald)' : 'var(--crimson)'};">${(o.side || '').toUpperCase()}</td>
+                        <td style="color: ${o.side === 'buy' ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 700;">${(o.side || '').toUpperCase()}</td>
                         <td style="font-weight: 600;">$${parseFloat(o.stop_price || o.limit_price || 0).toFixed(2)}</td>
                         <td>${o.size || 1} Lot</td>
                         <td><span class="badge-pill badge-buy">OPEN</span></td>
@@ -651,20 +744,43 @@ DASHBOARD_HTML = """
                 ordersTbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No active pending orders on Delta book</td></tr>';
             }
 
-            // Logs Table
+            // 6. Signal & Trade Feed Table (With PnL & Fees)
             const logsTbody = document.getElementById('logs-table-body');
             const logs = data.recent_logs || [];
             if (logs.length > 0) {
-                logsTbody.innerHTML = logs.map(l => `
-                    <tr>
-                        <td style="color: var(--text-muted);">${l.time}</td>
-                        <td style="color: ${l.action.includes('BUY') ? 'var(--emerald)' : (l.action.includes('SELL') ? 'var(--crimson)' : 'var(--amber)')}; font-weight: 700;">${l.action}</td>
-                        <td>${l.reason}</td>
-                        <td>$${parseFloat(l.price || 0).toFixed(2)}</td>
-                        <td style="color: var(--cyan);">${l.stop_loss ? '$' + parseFloat(l.stop_loss).toFixed(2) : '--'}</td>
-                        <td><span class="badge-pill badge-buy">EXECUTED</span></td>
-                    </tr>
-                `).join('');
+                logsTbody.innerHTML = logs.map(l => {
+                    const gross = parseFloat(l.gross_pnl || 0);
+                    const fee = parseFloat(l.fee || 0.0143);
+                    const net = parseFloat(l.net_pnl || 0);
+                    const netInr = parseFloat(l.net_pnl_inr || (net * USD_TO_INR));
+                    const isClosed = l.status === 'CLOSED';
+                    
+                    let pnlDisplay = '--';
+                    if (isClosed) {
+                        const col = net >= 0 ? 'var(--emerald)' : 'var(--crimson)';
+                        const sign = net >= 0 ? '+' : '';
+                        pnlDisplay = `<span style="color: ${col}; font-weight: 700;">${sign}$${net.toFixed(4)} <span style="font-size: 0.75rem; opacity: 0.8;">(${sign}₹${netInr.toFixed(2)})</span></span>`;
+                    }
+
+                    let actionBadge = '';
+                    if (l.action.includes('BUY')) actionBadge = '<span class="badge-pill badge-buy">BUY 🟢</span>';
+                    else if (l.action.includes('SELL')) actionBadge = '<span class="badge-pill badge-sell">SELL 🔴</span>';
+                    else if (l.action.includes('EXIT')) actionBadge = `<span class="badge-pill" style="background: rgba(245, 158, 11, 0.15); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.3);">${l.action} 🟠</span>`;
+                    else actionBadge = `<span class="badge-pill badge-flat">${l.action}</span>`;
+
+                    return `
+                        <tr>
+                            <td style="color: var(--text-muted);">${l.time}</td>
+                            <td>${actionBadge}</td>
+                            <td style="font-weight: 600;">$${parseFloat(l.price || 0).toFixed(2)}</td>
+                            <td style="color: ${gross >= 0 ? 'var(--emerald)' : 'var(--crimson)'};">${isClosed ? (gross >= 0 ? '+' : '') + '$' + gross.toFixed(4) : '--'}</td>
+                            <td style="color: var(--amber); font-weight: 600;">-$${fee.toFixed(4)}</td>
+                            <td>${pnlDisplay}</td>
+                            <td style="color: var(--text-muted); font-size: 0.8rem;">${l.reason}</td>
+                            <td><span class="badge-pill ${isClosed ? (net >= 0 ? 'badge-buy' : 'badge-sell') : 'badge-flat'}">${l.status || 'EXECUTED'}</span></td>
+                        </tr>
+                    `;
+                }).join('');
             }
         }
 
@@ -680,9 +796,8 @@ DASHBOARD_HTML = """
             }
         }
 
-        // Auto poll every 2 seconds
-        setInterval(fetchDashboardData, 2000);
         fetchDashboardData();
+        setInterval(fetchDashboardData, 2000);
     </script>
 </body>
 </html>

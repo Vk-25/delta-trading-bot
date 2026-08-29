@@ -12,21 +12,141 @@ from bot.strategy_engine import StrategyEngine, SignalResult
 from bot.utils import logger
 from bot.dashboard import DASHBOARD_HTML
 
+TRADE_FEE_PER_ORDER = 0.0143  # USDT fee per trade
+
 global_bot_instance: Optional['StandaloneBot'] = None
 recent_standalone_logs: List[Dict[str, Any]] = []
+completed_trades: List[Dict[str, Any]] = []
+active_trade_tracker: Dict[str, Any] = {}
 
-def log_standalone_event(action: str, reason: str, price: float, stop_loss: Optional[float] = None):
+def log_trade_entry(action: str, reason: str, entry_price: float, stop_loss: Optional[float] = None, size: int = 1):
+    global active_trade_tracker
     now_ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
+    active_trade_tracker = {
+        "action": action,
+        "entry_time": now_ist.strftime("%H:%M:%S IST"),
+        "entry_price": entry_price,
+        "stop_loss": stop_loss,
+        "size": size,
+        "fee": TRADE_FEE_PER_ORDER
+    }
     event = {
         "time": now_ist.strftime("%H:%M:%S IST"),
         "action": action,
         "reason": reason,
-        "price": price,
-        "stop_loss": stop_loss
+        "price": entry_price,
+        "stop_loss": stop_loss,
+        "gross_pnl": 0.0,
+        "fee": TRADE_FEE_PER_ORDER,
+        "net_pnl": -TRADE_FEE_PER_ORDER,
+        "net_pnl_inr": round(-TRADE_FEE_PER_ORDER * 87.5, 2),
+        "status": "OPEN"
     }
     recent_standalone_logs.insert(0, event)
     if len(recent_standalone_logs) > 50:
         recent_standalone_logs.pop()
+
+def log_trade_exit(action: str, reason: str, exit_price: float):
+    global active_trade_tracker
+    now_ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
+    
+    entry_p = active_trade_tracker.get("entry_price") or exit_price
+    side = active_trade_tracker.get("action") or ("BUY" if "LONG" in action else "SELL")
+    size = active_trade_tracker.get("size") or config.ORDER_SIZE
+    
+    # Delta ETHUSD Inverse / Point Value: 1 contract = 0.001 ETH
+    if "LONG" in action or side == "BUY":
+        price_diff = exit_price - entry_p
+    else:
+        price_diff = entry_p - exit_price
+        
+    gross_pnl = price_diff * size * 0.001
+    total_fee = TRADE_FEE_PER_ORDER
+    net_pnl = gross_pnl - total_fee
+    net_pnl_inr = net_pnl * 87.5
+    is_profit = net_pnl > 0
+    
+    trade_record = {
+        "entry_time": active_trade_tracker.get("entry_time", now_ist.strftime("%H:%M:%S IST")),
+        "exit_time": now_ist.strftime("%H:%M:%S IST"),
+        "side": side,
+        "entry_price": entry_p,
+        "exit_price": exit_price,
+        "price_diff": round(price_diff, 2),
+        "size": size,
+        "gross_pnl": round(gross_pnl, 4),
+        "fee": total_fee,
+        "net_pnl": round(net_pnl, 4),
+        "net_pnl_inr": round(net_pnl_inr, 2),
+        "is_profit": is_profit,
+        "reason": reason
+    }
+    completed_trades.insert(0, trade_record)
+    if len(completed_trades) > 100:
+        completed_trades.pop()
+        
+    event = {
+        "time": now_ist.strftime("%H:%M:%S IST"),
+        "action": action,
+        "reason": reason,
+        "price": exit_price,
+        "stop_loss": None,
+        "gross_pnl": round(gross_pnl, 4),
+        "fee": total_fee,
+        "net_pnl": round(net_pnl, 4),
+        "net_pnl_inr": round(net_pnl_inr, 2),
+        "is_profit": is_profit,
+        "status": "CLOSED"
+    }
+    recent_standalone_logs.insert(0, event)
+    if len(recent_standalone_logs) > 50:
+        recent_standalone_logs.pop()
+        
+    active_trade_tracker = {}
+
+def get_performance_stats() -> Dict[str, Any]:
+    total = len(completed_trades)
+    profitable = len([t for t in completed_trades if t.get("is_profit")])
+    losses = len([t for t in completed_trades if not t.get("is_profit")])
+    win_rate = round((profitable / total * 100), 1) if total > 0 else 0.0
+    total_fees = round(total * TRADE_FEE_PER_ORDER, 4)
+    total_gross = round(sum(t.get("gross_pnl", 0.0) for t in completed_trades), 4)
+    total_net = round(sum(t.get("net_pnl", 0.0) for t in completed_trades), 4)
+    total_net_inr = round(total_net * 87.5, 2)
+    
+    return {
+        "total_trades": total,
+        "profitable_trades": profitable,
+        "loss_trades": losses,
+        "win_rate": win_rate,
+        "total_fees": total_fees,
+        "total_gross_pnl": total_gross,
+        "total_net_pnl": total_net,
+        "total_net_pnl_inr": total_net_inr
+    }
+
+def log_standalone_event(action: str, reason: str, price: float, stop_loss: Optional[float] = None):
+    if action in ("BUY", "SELL"):
+        log_trade_entry(action, reason, price, stop_loss)
+    elif action in ("EXIT_LONG", "EXIT_SHORT", "EMERGENCY_CLOSE"):
+        log_trade_exit(action, reason, price)
+    else:
+        now_ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
+        event = {
+            "time": now_ist.strftime("%H:%M:%S IST"),
+            "action": action,
+            "reason": reason,
+            "price": price,
+            "stop_loss": stop_loss,
+            "gross_pnl": 0.0,
+            "fee": 0.0,
+            "net_pnl": 0.0,
+            "net_pnl_inr": 0.0,
+            "status": "INFO"
+        }
+        recent_standalone_logs.insert(0, event)
+        if len(recent_standalone_logs) > 50:
+            recent_standalone_logs.pop()
 
 class RenderHealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -113,6 +233,8 @@ class RenderHealthHandler(BaseHTTPRequestHandler):
                     "active_stop_price": active_sl,
                     "breakeven_locked": bot.strategy.breakeven_locked,
                     "market": market_info,
+                    "stats": get_performance_stats(),
+                    "completed_trades": completed_trades,
                     "recent_logs": recent_standalone_logs
                 }
                 self.wfile.write(json.dumps(payload).encode("utf-8"))
