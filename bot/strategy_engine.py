@@ -229,6 +229,7 @@ class StrategyEngine:
         live_macd = float(macd_line.iloc[-1])
         live_signal_line = float(macd_sig.iloc[-1])
 
+        prev_open = float(df['open'].iloc[-2])
         prev_high = float(df['high'].iloc[-2])
         prev_low = float(df['low'].iloc[-2])
         prev_close = float(df['close'].iloc[-2])
@@ -243,8 +244,10 @@ class StrategyEngine:
             ema_slope_up = live_ema >= prev_ema
             ema_slope_down = live_ema <= prev_ema
 
-            # 1. Live EMA Cut Breakout Entry (Strict Directional Breakout with EMA Confirmation)
-            ema_cut_prev = (prev_high >= prev_ema) and (prev_low <= prev_ema)
+            # 1. Live EMA Cut Breakout Entry (STRICT BODY CUT ONLY - EMA must cut the candle body, not just wicks)
+            prev_body_top = max(prev_open, prev_close)
+            prev_body_bottom = min(prev_open, prev_close)
+            ema_cut_prev = (prev_body_top >= prev_ema) and (prev_body_bottom <= prev_ema)
             
             # Clean Bullish Breakout: Breaks High, closes above EMA, did not violate Low
             live_bullish_cut_breakout = ema_cut_prev and (live_high > prev_high) and (live_close > live_ema) and (live_low >= prev_low)
@@ -402,6 +405,7 @@ class StrategyEngine:
         
         for i in range(1, n):
             # Previous bar values (bar index 1 in Pine Script)
+            prev_open = data['open'].iloc[i - 1]
             prev_high = data['high'].iloc[i - 1]
             prev_low = data['low'].iloc[i - 1]
             prev_close = data['close'].iloc[i - 1]
@@ -418,25 +422,22 @@ class StrategyEngine:
             curr_macd_line = data['macd_line'].iloc[i]
             curr_macd_signal = data['macd_signal'].iloc[i]
             
-            # 1. EMA Cut Candle condition on previous candle
-            ema_cutting_candle = (prev_high >= prev_entry_ema) and (prev_low <= prev_entry_ema)
+            # 1. EMA Cut Candle condition on previous candle (STRICT BODY CUT ONLY)
+            prev_body_top = max(prev_open, prev_close)
+            prev_body_bottom = min(prev_open, prev_close)
+            ema_cutting_candle = (prev_body_top >= prev_entry_ema) and (prev_body_bottom <= prev_entry_ema)
             
-            # 2. Raw Buy/Sell triggers
+            # 2. Raw Buy/Sell triggers (Strict Directional Breakout)
             raw_buy = False
             raw_sell = False
             
             if ema_cutting_candle:
-                break_high = curr_high > prev_high
-                break_low = curr_low < prev_low
+                clean_break_high = (curr_high > prev_high) and (curr_close > curr_entry_ema) and (curr_low >= prev_low)
+                clean_break_low = (curr_low < prev_low) and (curr_close < curr_entry_ema) and (curr_high <= prev_high)
                 
-                if break_high and break_low:
-                    if curr_close > prev_close:
-                        raw_buy = True
-                    elif curr_close < prev_close:
-                        raw_sell = True
-                elif break_high:
+                if clean_break_high:
                     raw_buy = True
-                elif break_low:
+                elif clean_break_low:
                     raw_sell = True
                     
             exit_long = False
@@ -630,6 +631,7 @@ class StrategyEngine:
             )
 
         i = len(data) - 1
+        prev_open = float(data['open'].iloc[i - 1])
         prev_high = float(data['high'].iloc[i - 1])
         prev_low = float(data['low'].iloc[i - 1])
         prev_close = float(data['close'].iloc[i - 1])
@@ -645,23 +647,21 @@ class StrategyEngine:
         curr_macd_line = float(data['macd_line'].iloc[i])
         curr_macd_signal = float(data['macd_signal'].iloc[i])
 
-        ema_cutting_candle = (prev_high >= prev_entry_ema) and (prev_low <= prev_entry_ema)
+        # 1. EMA Cut Candle condition on previous candle (STRICT BODY CUT ONLY)
+        prev_body_top = max(prev_open, prev_close)
+        prev_body_bottom = min(prev_open, prev_close)
+        ema_cutting_candle = (prev_body_top >= prev_entry_ema) and (prev_body_bottom <= prev_entry_ema)
 
         raw_buy = False
         raw_sell = False
 
         if ema_cutting_candle:
-            break_high = curr_high > prev_high
-            break_low = curr_low < prev_low
+            clean_break_high = (curr_high > prev_high) and (curr_close > curr_entry_ema) and (curr_low >= prev_low)
+            clean_break_low = (curr_low < prev_low) and (curr_close < curr_entry_ema) and (curr_high <= prev_high)
 
-            if break_high and break_low:
-                if curr_close > prev_close:
-                    raw_buy = True
-                elif curr_close < prev_close:
-                    raw_sell = True
-            elif break_high:
+            if clean_break_high:
                 raw_buy = True
-            elif break_low:
+            elif clean_break_low:
                 raw_sell = True
 
         action = "NONE"

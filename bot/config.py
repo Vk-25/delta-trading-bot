@@ -55,8 +55,8 @@ class BotConfig:
     ENABLE_EMERGENCY: bool = os.getenv("ENABLE_EMERGENCY", "true").lower() in ("true", "1", "yes")
     EMERGENCY_ATR: float = float(os.getenv("EMERGENCY_ATR", "0.45"))
     
-    # Standalone Bot Polling
-    TIMEFRAME: str = os.getenv("TIMEFRAME", "5m")
+    # Standalone Bot Polling (15m Primary Timeframe)
+    TIMEFRAME: str = os.getenv("TIMEFRAME", "15m")
     POLL_INTERVAL_SECONDS: int = int(os.getenv("POLL_INTERVAL_SECONDS", "1"))
     
     # Optional Proxy (for static IP routing on Render)

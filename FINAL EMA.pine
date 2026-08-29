@@ -1,5 +1,5 @@
 //@version=6
-indicator("DeltaBot 100x | Option A: Strict 21 EMA Cut Breakout", overlay=true, max_lines_count=500, max_boxes_count=100)
+indicator("DeltaBot 100x | Option A: Strict 21 EMA Body Cut Breakout (15m)", overlay=true, max_lines_count=500, max_boxes_count=100)
 
 // ============================================================================
 // INPUTS & WEBHOOK SETTINGS
@@ -8,7 +8,7 @@ indicator("DeltaBot 100x | Option A: Strict 21 EMA Cut Breakout", overlay=true, 
 webhookPassphrase = input.string("supersecretpassphrase123", "Webhook Passphrase (match .env)", group="BOT AUTOMATION")
 orderSize = input.int(1, "Order Size (Contracts)", minval=1, group="BOT AUTOMATION")
 
-// ---------------- OPTION A: 21 EMA CUT SETTINGS ----------------
+// ---------------- OPTION A: 21 EMA BODY CUT SETTINGS ----------------
 emaLength = input.int(21, "Entry 21 EMA Length", minval=1, group="ENTRY (OPTION A)")
 enableLiveIntraBar = input.bool(true, "Execute Instantly on Breakout (No close delay)", group="ENTRY (OPTION A)")
 enableTrendContinuation = input.bool(false, "Enable Trend Continuation Re-entries (Disabled for Option A)", group="ENTRY (OPTION A)")
@@ -47,11 +47,13 @@ exitATR = ta.atr(atrLength)
 plot(entryEMA, title="21 EMA", color=color.rgb(6, 182, 212), linewidth=2)
 
 // ============================================================================
-// OPTION A: 21 EMA CUT CANDLE & BREAKOUT LOGIC
+// OPTION A: 21 EMA BODY CUT & DIRECTIONAL BREAKOUT LOGIC
 // ============================================================================
 
-// Previous candle cut through the 21 EMA
-emaCuttingCandle = high[1] >= entryEMA[1] and low[1] <= entryEMA[1]
+// Strict Body Cut: 21 EMA must slice through the Candle Body (not just wicks)
+bodyTop = math.max(open[1], close[1])
+bodyBottom = math.min(open[1], close[1])
+emaCuttingCandle = bodyBottom <= entryEMA[1] and bodyTop >= entryEMA[1]
 
 bool rawBuy = false
 bool rawSell = false
@@ -67,12 +69,11 @@ if emaCuttingCandle
         rawSell := true
 else if enableTrendContinuation
     bool uptrend = close > entryEMA and exitRSI >= 50 and macdLine >= macdSignal
-    bool downtrend = close < entryEMA and exitRSI <= 50 and macdLine <= macdSignal
+    downtrend = close < entryEMA and exitRSI <= 50 and macdLine <= macdSignal
     if uptrend and high > high[1]
         rawBuy := true
     else if downtrend and low < low[1]
-// Highlight EMA Cut candles disabled (Natural chart colors)
-// barcolor(na)
+        rawSell := true
 
 // ============================================================================
 // POSITION STATE MACHINE
@@ -202,14 +203,13 @@ if positionState == 0 and not exitedThisBar
 // VISUAL PLOTS ON CHART
 // ============================================================================
 
-// Buy / Sell Labels
-plotshape(newBuy, title="BUY Entry", style=shape.labelup, location=location.belowbar, color=color.rgb(16, 185, 129), text="BUY (EMA Cut)", textcolor=color.white, size=size.normal)
-plotshape(newSell, title="SELL Entry", style=shape.labeldown, location=location.abovebar, color=color.rgb(244, 63, 94), text="SELL (EMA Cut)", textcolor=color.white, size=size.normal)
+plotshape(newBuy, title="BUY Entry", style=shape.labelup, location=location.belowbar, color=color.rgb(16, 185, 129), text="BUY (15m Body Cut)", textcolor=color.white, size=size.normal)
+plotshape(newSell, title="SELL Entry", style=shape.labeldown, location=location.abovebar, color=color.rgb(244, 63, 94), text="SELL (15m Body Cut)", textcolor=color.white, size=size.normal)
 plotshape(exitLong, title="EXIT LONG", style=shape.labeldown, location=location.abovebar, color=color.rgb(245, 158, 11), text="EXIT LONG", textcolor=color.white, size=size.small)
 plotshape(exitShort, title="EXIT SHORT", style=shape.labelup, location=location.belowbar, color=color.rgb(245, 158, 11), text="EXIT SHORT", textcolor=color.white, size=size.small)
 
 // Live Stop Loss / Trailing Line
-plot(activeStopLoss, title="Active Stop-Loss / Trailing Level", color=positionState == 1 ? color.rgb(239, 68, 68) : (positionState == -1 ? color.rgb(239, 68, 68) : na), linewidth=2, style=plot.style_linebr)
+plot(activeStopLoss, title="Active Stop-Loss / Trailing Level", color=color.rgb(239, 68, 68), linewidth=2, style=plot.style_linebr)
 
 // Entry Price Reference Line
 plot(positionState != 0 ? entryPrice : na, title="Entry Price", color=color.rgb(148, 163, 184), linewidth=1, style=plot.style_circles)
@@ -220,8 +220,8 @@ plot(positionState != 0 ? entryPrice : na, title="Entry Price", color=color.rgb(
 
 var table hud = table.new(position.top_right, 2, 6, bgcolor=color.rgb(15, 23, 42, 20), border_color=color.rgb(255, 255, 255, 15), border_width=1)
 if barstate.islast
-    table.cell(hud, 0, 0, "Strategy", text_color=color.rgb(148, 163, 184), text_size=size.small)
-    table.cell(hud, 1, 0, "Option A (100x Precision)", text_color=color.rgb(6, 182, 212), text_size=size.small)
+    table.cell(hud, 0, 0, "Timeframe", text_color=color.rgb(148, 163, 184), text_size=size.small)
+    table.cell(hud, 1, 0, "15m Precision", text_color=color.rgb(6, 182, 212), text_size=size.small)
 
     table.cell(hud, 0, 1, "Position", text_color=color.rgb(148, 163, 184), text_size=size.small)
     string posStr = positionState == 1 ? "LONG 🟢" : (positionState == -1 ? "SHORT 🔴" : "FLAT ⚪")

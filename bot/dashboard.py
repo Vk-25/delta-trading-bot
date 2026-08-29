@@ -355,7 +355,7 @@ DASHBOARD_HTML = """
                 <div class="brand-logo">Δ</div>
                 <div class="brand-title">
                     <h1>DeltaBot Live Dashboard</h1>
-                    <p>ETHUSD • 5m Timeframe • 100x Precision Strategy</p>
+                    <p>ETHUSD • 15m Timeframe • 100x Precision Strategy (Strict Body Cut)</p>
                 </div>
             </div>
 
