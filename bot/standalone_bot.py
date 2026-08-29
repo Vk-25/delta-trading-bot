@@ -188,6 +188,7 @@ class StandaloneBot:
             enable_trend_continuation=config.ENABLE_TREND_CONTINUATION
         )
         self.last_processed_timestamp: Optional[int] = None
+        self.last_entry_candle_timestamp: Optional[int] = None
         self.last_exchange_stop_price: Optional[float] = None
 
     def fetch_ohlcv_dataframe(self) -> Optional[pd.DataFrame]:
@@ -274,12 +275,12 @@ class StandaloneBot:
                 )
                 self.strategy.sync_position(config.ORDER_SIZE, entry_p if entry_p > 0 else None)
                 
-                # Stop Loss strictly placed at Low of EMA cutting candle
+                # Stop Loss strictly placed at Low of EMA cutting candle (Pinpoint accuracy)
                 explicit_sl = signal.metrics.get("stop_loss")
-                if explicit_sl is not None and float(explicit_sl) > (entry_p * 0.5):
-                    initial_sl = float(explicit_sl)
+                if explicit_sl is not None and float(explicit_sl) < (entry_p - 0.20):
+                    initial_sl = round(float(explicit_sl), 2)
                 else:
-                    initial_sl = entry_p - (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 8.0)
+                    initial_sl = round(entry_p - (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 4.0), 2)
 
                 self.strategy.long_trail_stop = initial_sl
                 logger.info(f"🛡️ [DELTA STOP PLACED] Submitting Real Stop-Loss Order at EMA Cut Low ({initial_sl:.2f}) on Delta...")
@@ -316,12 +317,12 @@ class StandaloneBot:
                 )
                 self.strategy.sync_position(-config.ORDER_SIZE, entry_p if entry_p > 0 else None)
                 
-                # Stop Loss strictly placed at High of EMA cutting candle
+                # Stop Loss strictly placed at High of EMA cutting candle (Pinpoint accuracy)
                 explicit_sl = signal.metrics.get("stop_loss")
-                if explicit_sl is not None and float(explicit_sl) > (entry_p * 0.5):
-                    initial_sl = float(explicit_sl)
+                if explicit_sl is not None and float(explicit_sl) > (entry_p + 0.20):
+                    initial_sl = round(float(explicit_sl), 2)
                 else:
-                    initial_sl = entry_p + (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 8.0)
+                    initial_sl = round(entry_p + (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 4.0), 2)
 
                 self.strategy.short_trail_stop = initial_sl
                 logger.info(f"🛡️ [DELTA STOP PLACED] Submitting Real Stop-Loss Order at EMA Cut High ({initial_sl:.2f}) on Delta...")
@@ -373,18 +374,22 @@ class StandaloneBot:
                 # Keep real stop order on Delta Exchange synced with trailing stop / breakeven
                 self.sync_exchange_trailing_stop(latest_atr, live_price=live_price)
 
-        # 2. REAL-TIME LIVE ENTRY CHECK (Runs every 1-2 seconds when flat - No 60s delay!)
+        # 2. REAL-TIME LIVE ENTRY CHECK (Runs every 1-2 seconds when flat - Single Entry Per 5m Candle!)
         if config.ENABLE_LIVE_ENTRIES and self.strategy.position_state == 0:
             # Sweep any leftover orders if flat
             if self.last_exchange_stop_price is not None:
                 self.client.cancel_all_orders(self.symbol)
                 self.last_exchange_stop_price = None
 
-            live_entry_sig = self.strategy.get_live_signal(df)
-            if live_entry_sig and live_entry_sig.action in ("BUY", "SELL"):
-                logger.info(f"[REAL-TIME LIVE ENTRY] {live_entry_sig.action} -> {live_entry_sig.reason} (Price: {live_entry_sig.price:.2f})")
-                self.execute_signal(live_entry_sig, current_atr=latest_atr)
-                return
+            curr_candle_ts = int(df["timestamp"].iloc[-1].timestamp())
+            # Only enter ONCE per 5m candle
+            if self.last_entry_candle_timestamp != curr_candle_ts:
+                live_entry_sig = self.strategy.get_live_signal(df)
+                if live_entry_sig and live_entry_sig.action in ("BUY", "SELL"):
+                    logger.info(f"[REAL-TIME LIVE ENTRY] {live_entry_sig.action} -> {live_entry_sig.reason} (Price: {live_entry_sig.price:.2f})")
+                    self.last_entry_candle_timestamp = curr_candle_ts
+                    self.execute_signal(live_entry_sig, current_atr=latest_atr)
+                    return
 
         # 3. CONFIRMED CANDLE CLOSE STRATEGY EVALUATION (Runs on every completed bar)
         confirmed_df = df.iloc[:-1].copy()

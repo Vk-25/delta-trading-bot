@@ -245,8 +245,8 @@ class StrategyEngine:
 
             # 1. Live EMA Cut Breakout Entry (Immediately on break of High/Low without waiting for candle close)
             ema_cut_prev = (prev_high >= prev_ema) and (prev_low <= prev_ema)
-            live_bullish_cut_breakout = ema_cut_prev and (live_high > prev_high)
-            live_bearish_cut_breakout = ema_cut_prev and (live_low < prev_low)
+            live_bullish_cut_breakout = ema_cut_prev and (live_high > prev_high) and (live_close > prev_low)
+            live_bearish_cut_breakout = ema_cut_prev and (live_low < prev_low) and (live_close < prev_high)
 
             if live_bullish_cut_breakout:
                 action = "BUY"
