@@ -315,7 +315,7 @@ class StandaloneBot:
 
     def fetch_ohlcv_dataframe(self) -> Optional[pd.DataFrame]:
         """Fetches candles from Delta Exchange and converts to pandas DataFrame."""
-        candles_res = self.client.get_candles(self.symbol, resolution=self.timeframe, limit=150)
+        candles_res = self.client.get_candles(self.symbol, resolution=self.timeframe, limit=350)
         result = candles_res.get("result", {})
         
         if not result or "t" not in result or len(result["t"]) == 0:
