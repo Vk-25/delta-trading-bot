@@ -71,10 +71,8 @@ else if enableTrendContinuation
     if uptrend and high > high[1]
         rawBuy := true
     else if downtrend and low < low[1]
-        rawSell := true
-
-// Highlight EMA Cut candles in Gold
-barcolor(emaCuttingCandle ? color.rgb(245, 158, 11, 20) : na, title="EMA Cut Candle Highlight")
+// Highlight EMA Cut candles disabled (Natural chart colors)
+// barcolor(na)
 
 // ============================================================================
 // POSITION STATE MACHINE
