@@ -5,7 +5,7 @@ indicator("EMA Cut Breakout [Universal Smart Exit] - FIXED", overlay=true, max_l
 // INPUTS
 // ============================================================================
 
-emaLength = input.int(20, "Entry EMA Length", minval=1, group="ENTRY")
+emaLength = input.int(21, "Entry EMA Length", minval=1, group="ENTRY")
 
 showBarColors = input.bool(
      true,
@@ -53,7 +53,7 @@ exitConfirmations = input.int(
 // ---------------- EXIT INDICATORS ----------------
 
 exitEMALength = input.int(
-     20,
+     21,
      "Exit EMA Length",
      minval=1,
      group="EXIT INDICATORS")

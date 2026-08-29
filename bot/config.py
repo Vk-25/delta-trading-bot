@@ -21,17 +21,17 @@ class BotConfig:
     WEBHOOK_PASSPHRASE: str = os.getenv("WEBHOOK_PASSPHRASE", "").strip()
     
     # Trade execution defaults
-    TRADING_SYMBOL: str = os.getenv("TRADING_SYMBOL", "BTCUSD").strip().upper()
+    TRADING_SYMBOL: str = os.getenv("TRADING_SYMBOL", "ETHUSD").strip().upper()
     ORDER_SIZE: int = int(os.getenv("ORDER_SIZE", "1"))
-    LEVERAGE: int = int(os.getenv("LEVERAGE", "10"))
+    LEVERAGE: int = int(os.getenv("LEVERAGE", "200"))
     ORDER_TYPE: str = os.getenv("ORDER_TYPE", "market_order").strip()
     
     # Strategy parameters
-    ENTRY_EMA_LENGTH: int = int(os.getenv("ENTRY_EMA_LENGTH", "20"))
+    ENTRY_EMA_LENGTH: int = int(os.getenv("ENTRY_EMA_LENGTH", "21"))
     ENABLE_SMART_EXIT: bool = os.getenv("ENABLE_SMART_EXIT", "true").lower() in ("true", "1", "yes")
     EXIT_ON_OPPOSITE: bool = os.getenv("EXIT_ON_OPPOSITE", "true").lower() in ("true", "1", "yes")
     EXIT_CONFIRMATIONS: int = int(os.getenv("EXIT_CONFIRMATIONS", "2"))
-    EXIT_EMA_LENGTH: int = int(os.getenv("EXIT_EMA_LENGTH", "20"))
+    EXIT_EMA_LENGTH: int = int(os.getenv("EXIT_EMA_LENGTH", "21"))
     RSI_LENGTH: int = int(os.getenv("RSI_LENGTH", "14"))
     ATR_LENGTH: int = int(os.getenv("ATR_LENGTH", "14"))
     
@@ -56,7 +56,7 @@ class BotConfig:
     EMERGENCY_ATR: float = float(os.getenv("EMERGENCY_ATR", "2.0"))
     
     # Standalone Bot Polling
-    TIMEFRAME: str = os.getenv("TIMEFRAME", "1m")
+    TIMEFRAME: str = os.getenv("TIMEFRAME", "5m")
     POLL_INTERVAL_SECONDS: int = int(os.getenv("POLL_INTERVAL_SECONDS", "1"))
     
     # Optional Proxy (for static IP routing on Render)

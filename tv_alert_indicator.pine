@@ -8,7 +8,7 @@ indicator("EMA Cut Breakout [Universal Smart Exit] - DELTA BOT", overlay=true, m
 webhookPassphrase = input.string("supersecretpassphrase123", "Webhook Passphrase (match .env)", group="BOT AUTOMATION")
 orderSize = input.int(1, "Order Size (Contracts)", minval=1, group="BOT AUTOMATION")
 
-emaLength = input.int(20, "Entry EMA Length", minval=1, group="ENTRY")
+emaLength = input.int(21, "Entry EMA Length", minval=1, group="ENTRY")
 
 showBarColors = input.bool(true, "Color Signal Candles", group="ENTRY")
 showBreakoutLines = input.bool(true, "Show Breakout Lines", group="ENTRY")
@@ -25,7 +25,7 @@ exitConfirmations = input.int(2, "Required Exit Confirmations", minval=1, maxval
 
 // ---------------- EXIT INDICATORS ----------------
 
-exitEMALength = input.int(20, "Exit EMA Length", minval=1, group="EXIT INDICATORS")
+exitEMALength = input.int(21, "Exit EMA Length", minval=1, group="EXIT INDICATORS")
 rsiLength = input.int(14, "RSI Length", minval=1, group="EXIT INDICATORS")
 atrLength = input.int(14, "ATR Length", minval=1, group="EXIT INDICATORS")
 

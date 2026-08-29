@@ -267,7 +267,13 @@ class DeltaExchangeClient:
             order_info = res.get("result", {})
             logger.info(f"Order SUCCESS: ID={order_info.get('id')} Status={order_info.get('state')} Size={order_info.get('size')}")
         else:
-            logger.error(f"Order FAILED: {res.get('error')}")
+            err = res.get('error')
+            logger.error(f"Order FAILED: {err}")
+            if "insufficient_commission" in str(err) or "insufficient_margin" in str(err):
+                logger.warning(
+                    "[ACTION REQUIRED] Delta Exchange rejected the order due to 'insufficient_commission/margin'. "
+                    "Please verify that your Delta Derivatives Wallet has sufficient available USDT/USD to cover margin and taker fees."
+                )
             
         return res
 
