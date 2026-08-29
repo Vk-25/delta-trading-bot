@@ -243,10 +243,14 @@ class StrategyEngine:
             ema_slope_up = live_ema >= prev_ema
             ema_slope_down = live_ema <= prev_ema
 
-            # 1. Live EMA Cut Breakout Entry (Immediately on break of High/Low without waiting for candle close)
+            # 1. Live EMA Cut Breakout Entry (Strict Directional Breakout with EMA Confirmation)
             ema_cut_prev = (prev_high >= prev_ema) and (prev_low <= prev_ema)
-            live_bullish_cut_breakout = ema_cut_prev and (live_high > prev_high) and (live_close > prev_low)
-            live_bearish_cut_breakout = ema_cut_prev and (live_low < prev_low) and (live_close < prev_high)
+            
+            # Clean Bullish Breakout: Breaks High, closes above EMA, did not violate Low
+            live_bullish_cut_breakout = ema_cut_prev and (live_high > prev_high) and (live_close > live_ema) and (live_low >= prev_low)
+            
+            # Clean Bearish Breakdown: Breaks Low, closes below EMA, did not violate High
+            live_bearish_cut_breakout = ema_cut_prev and (live_low < prev_low) and (live_close < live_ema) and (live_high <= prev_high)
 
             if live_bullish_cut_breakout:
                 action = "BUY"

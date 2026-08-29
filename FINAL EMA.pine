@@ -57,17 +57,13 @@ bool rawBuy = false
 bool rawSell = false
 
 if emaCuttingCandle
-    bool breakHigh = high > high[1]
-    bool breakLow = low < low[1]
+    // Clean Directional Breakout: Must break structure, close on the correct side of EMA, and not violate opposite side
+    bool cleanBreakHigh = high > high[1] and close > entryEMA and low >= low[1]
+    bool cleanBreakLow = low < low[1] and close < entryEMA and high <= high[1]
 
-    if breakHigh and breakLow
-        if close > close[1]
-            rawBuy := true
-        else if close < close[1]
-            rawSell := true
-    else if breakHigh
+    if cleanBreakHigh
         rawBuy := true
-    else if breakLow
+    else if cleanBreakLow
         rawSell := true
 else if enableTrendContinuation
     bool uptrend = close > entryEMA and exitRSI >= 50 and macdLine >= macdSignal
