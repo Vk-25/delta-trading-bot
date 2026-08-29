@@ -23,6 +23,7 @@ class WebhookPayload(BaseModel):
     size: Optional[int] = Field(None, description="Order size (contracts). If omitted, uses ORDER_SIZE from config")
     order_type: Optional[str] = Field(None, description="market_order or limit_order")
     price: Optional[float] = Field(None, description="Price at time of trigger")
+    stop_loss: Optional[float] = Field(None, description="Stop Loss price (e.g. EMA cut candle low/high)")
     comment: Optional[str] = Field(None, description="Optional note or strategy comment")
 
 def process_trade_action(payload: WebhookPayload) -> dict:
@@ -31,7 +32,7 @@ def process_trade_action(payload: WebhookPayload) -> dict:
     order_type = (payload.order_type or config.ORDER_TYPE).lower()
     action = payload.action.upper()
 
-    logger.info(f"===> Received TradingView Webhook Action: [{action}] for {symbol} (Size: {size}, Price: {payload.price})")
+    logger.info(f"===> Received TradingView Webhook Action: [{action}] for {symbol} (Size: {size}, Price: {payload.price}, StopLoss: {payload.stop_loss})")
 
     # Fetch existing position
     existing_pos = delta_client.get_position_for_symbol(symbol)
@@ -52,6 +53,10 @@ def process_trade_action(payload: WebhookPayload) -> dict:
             side="buy",
             order_type=order_type
         )
+        if res.get("success") and payload.stop_loss is not None and float(payload.stop_loss) > 0:
+            delta_client.cancel_all_orders(symbol)
+            delta_client.place_stop_order(symbol, size, "sell", stop_price=float(payload.stop_loss))
+            logger.info(f"🛡️ [WEBHOOK STOP PLACED] Stop-Loss placed on Delta at {float(payload.stop_loss):.2f}")
         return {"action": "BUY", "result": res}
 
     elif action == "SELL":
@@ -69,6 +74,10 @@ def process_trade_action(payload: WebhookPayload) -> dict:
             side="sell",
             order_type=order_type
         )
+        if res.get("success") and payload.stop_loss is not None and float(payload.stop_loss) > 0:
+            delta_client.cancel_all_orders(symbol)
+            delta_client.place_stop_order(symbol, size, "buy", stop_price=float(payload.stop_loss))
+            logger.info(f"🛡️ [WEBHOOK STOP PLACED] Stop-Loss placed on Delta at {float(payload.stop_loss):.2f}")
         return {"action": "SELL", "result": res}
 
     elif action == "EXIT_LONG":

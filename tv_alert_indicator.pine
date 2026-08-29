@@ -212,7 +212,7 @@ if canProcess
             entryPrice := close
             highestPrice := high
             lowestPrice := na
-            longTrailStop := na
+            longTrailStop := low[1]  // Hard Stop Loss at Low of previous EMA cutting candle
             shortTrailStop := na
         else if rawSell
             newSell := true
@@ -221,7 +221,7 @@ if canProcess
             lowestPrice := low
             highestPrice := na
             longTrailStop := na
-            shortTrailStop := na
+            shortTrailStop := high[1]  // Hard Stop Loss at High of previous EMA cutting candle
 
 // ============================================================================
 // PLOTS
@@ -233,11 +233,11 @@ plotshape(exitLong, title="EXIT LONG", style=shape.labeldown, location=location.
 plotshape(exitShort, title="EXIT SHORT", style=shape.labelup, location=location.belowbar, color=color.orange, text="EXIT", textcolor=color.white, size=size.normal)
 
 // ============================================================================
-// WEBHOOK ALERTS (JSON FORMATTED FOR DELTA EXCHANGE BOT)
+// WEBHOOK ALERTS (JSON FORMATTED FOR DELTA EXCHANGE BOT WITH CUT CANDLE STOP LOSS)
 // ============================================================================
 
-buyAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"BUY","symbol":"' + syminfo.ticker + '","size":' + str.tostring(orderSize) + ',"price":' + str.tostring(close) + '}'
-sellAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"SELL","symbol":"' + syminfo.ticker + '","size":' + str.tostring(orderSize) + ',"price":' + str.tostring(close) + '}'
+buyAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"BUY","symbol":"' + syminfo.ticker + '","size":' + str.tostring(orderSize) + ',"price":' + str.tostring(close) + ',"stop_loss":' + str.tostring(low[1]) + '}'
+sellAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"SELL","symbol":"' + syminfo.ticker + '","size":' + str.tostring(orderSize) + ',"price":' + str.tostring(close) + ',"stop_loss":' + str.tostring(high[1]) + '}'
 exitLongAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"EXIT_LONG","symbol":"' + syminfo.ticker + '","price":' + str.tostring(close) + '}'
 exitShortAlertMsg = '{"passphrase":"' + webhookPassphrase + '","action":"EXIT_SHORT","symbol":"' + syminfo.ticker + '","price":' + str.tostring(close) + '}'
 

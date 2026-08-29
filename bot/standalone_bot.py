@@ -128,9 +128,15 @@ class StandaloneBot:
                 entry_p = float(res.get("result", {}).get("avg_fill_price") or signal.metrics.get("current_price") or 0)
                 self.strategy.sync_position(config.ORDER_SIZE, entry_p if entry_p > 0 else None)
                 
-                # Place real anti-liquidation hard Stop-Loss directly on Delta Exchange
-                initial_sl = entry_p - (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 8.0)
-                logger.info(f"🛡️ [DELTA HARD STOP PLACED] Submitting Real Stop-Loss Order on Delta at {initial_sl:.2f}")
+                # Stop Loss strictly placed at Low of EMA cutting candle
+                explicit_sl = signal.metrics.get("stop_loss")
+                if explicit_sl is not None and float(explicit_sl) > 0:
+                    initial_sl = float(explicit_sl)
+                else:
+                    initial_sl = entry_p - (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 8.0)
+
+                self.strategy.long_trail_stop = initial_sl
+                logger.info(f"🛡️ [DELTA STOP PLACED] Submitting Real Stop-Loss Order at EMA Cut Low ({initial_sl:.2f}) on Delta...")
                 self.client.cancel_all_orders(self.symbol)
                 self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "sell", stop_price=initial_sl)
                 self.last_exchange_stop_price = initial_sl
@@ -155,9 +161,15 @@ class StandaloneBot:
                 entry_p = float(res.get("result", {}).get("avg_fill_price") or signal.metrics.get("current_price") or 0)
                 self.strategy.sync_position(-config.ORDER_SIZE, entry_p if entry_p > 0 else None)
                 
-                # Place real anti-liquidation hard Stop-Loss directly on Delta Exchange
-                initial_sl = entry_p + (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 8.0)
-                logger.info(f"🛡️ [DELTA HARD STOP PLACED] Submitting Real Stop-Loss Order on Delta at {initial_sl:.2f}")
+                # Stop Loss strictly placed at High of EMA cutting candle
+                explicit_sl = signal.metrics.get("stop_loss")
+                if explicit_sl is not None and float(explicit_sl) > 0:
+                    initial_sl = float(explicit_sl)
+                else:
+                    initial_sl = entry_p + (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 8.0)
+
+                self.strategy.short_trail_stop = initial_sl
+                logger.info(f"🛡️ [DELTA STOP PLACED] Submitting Real Stop-Loss Order at EMA Cut High ({initial_sl:.2f}) on Delta...")
                 self.client.cancel_all_orders(self.symbol)
                 self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "buy", stop_price=initial_sl)
                 self.last_exchange_stop_price = initial_sl
