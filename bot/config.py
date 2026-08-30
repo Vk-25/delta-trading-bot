@@ -26,37 +26,41 @@ class BotConfig:
     LEVERAGE: int = int(os.getenv("LEVERAGE", "100"))
     ORDER_TYPE: str = os.getenv("ORDER_TYPE", "market_order").strip()
     
-    # Strategy parameters
+    # Strategy Mode: "scalper" (60+ trades/day high frequency on 1m/3m/5m) or "swing" (15m conservative)
+    STRATEGY_MODE: str = os.getenv("STRATEGY_MODE", "scalper").strip().lower()
+    FAST_EMA_LENGTH: int = int(os.getenv("FAST_EMA_LENGTH", "9"))
     ENTRY_EMA_LENGTH: int = int(os.getenv("ENTRY_EMA_LENGTH", "21"))
     ENABLE_SMART_EXIT: bool = os.getenv("ENABLE_SMART_EXIT", "true").lower() in ("true", "1", "yes")
     EXIT_ON_OPPOSITE: bool = os.getenv("EXIT_ON_OPPOSITE", "true").lower() in ("true", "1", "yes")
-    EXIT_CONFIRMATIONS: int = int(os.getenv("EXIT_CONFIRMATIONS", "3"))
+    EXIT_CONFIRMATIONS: int = int(os.getenv("EXIT_CONFIRMATIONS", "2"))
     EXIT_EMA_LENGTH: int = int(os.getenv("EXIT_EMA_LENGTH", "21"))
     RSI_LENGTH: int = int(os.getenv("RSI_LENGTH", "14"))
     ATR_LENGTH: int = int(os.getenv("ATR_LENGTH", "14"))
     
-    # Entry Refinements (Option A: Strict 21 EMA Cut Breakout ONLY)
+    # High-Frequency Scalping Triggers (60+ Entries/Day)
     ENABLE_LIVE_ENTRIES: bool = os.getenv("ENABLE_LIVE_ENTRIES", "true").lower() in ("true", "1", "yes")
-    ENABLE_TREND_CONTINUATION: bool = os.getenv("ENABLE_TREND_CONTINUATION", "false").lower() in ("true", "1", "yes")
+    ENABLE_TREND_CONTINUATION: bool = os.getenv("ENABLE_TREND_CONTINUATION", "true").lower() in ("true", "1", "yes")
+    ENABLE_RANGE_BREAKOUT: bool = os.getenv("ENABLE_RANGE_BREAKOUT", "true").lower() in ("true", "1", "yes")
+    ENABLE_RSI_REVERSAL: bool = os.getenv("ENABLE_RSI_REVERSAL", "true").lower() in ("true", "1", "yes")
     
-    # Capital Protection & Zero-Loss Auto-Breakeven
+    # Capital Protection & Zero-Loss Auto-Breakeven (Scalper Defaults)
     ENABLE_BREAKEVEN: bool = os.getenv("ENABLE_BREAKEVEN", "true").lower() in ("true", "1", "yes")
-    BREAKEVEN_ATR: float = float(os.getenv("BREAKEVEN_ATR", "0.85"))
-    FEE_BUFFER_USD: float = float(os.getenv("FEE_BUFFER_USD", "1.5"))
+    BREAKEVEN_ATR: float = float(os.getenv("BREAKEVEN_ATR", "0.35"))
+    FEE_BUFFER_USD: float = float(os.getenv("FEE_BUFFER_USD", "0.50"))
     
-    # Profit Protection & Real-time Trailing Stop
+    # Profit Protection & Real-time Trailing Stop (Scalper Defaults)
     ENABLE_PROTECTION: bool = os.getenv("ENABLE_PROTECTION", "true").lower() in ("true", "1", "yes")
     ENABLE_INTRA_CANDLE_EXIT: bool = os.getenv("ENABLE_INTRA_CANDLE_EXIT", "true").lower() in ("true", "1", "yes")
-    ACTIVATION_ATR: float = float(os.getenv("ACTIVATION_ATR", "1.0"))
-    TRAIL_ATR: float = float(os.getenv("TRAIL_ATR", "0.85"))
-    TAKE_PROFIT_ATR: float = float(os.getenv("TAKE_PROFIT_ATR", "0.0"))
+    ACTIVATION_ATR: float = float(os.getenv("ACTIVATION_ATR", "0.50"))
+    TRAIL_ATR: float = float(os.getenv("TRAIL_ATR", "0.45"))
+    TAKE_PROFIT_ATR: float = float(os.getenv("TAKE_PROFIT_ATR", "0.85"))
     
     # Emergency Stop
     ENABLE_EMERGENCY: bool = os.getenv("ENABLE_EMERGENCY", "true").lower() in ("true", "1", "yes")
-    EMERGENCY_ATR: float = float(os.getenv("EMERGENCY_ATR", "1.50"))
+    EMERGENCY_ATR: float = float(os.getenv("EMERGENCY_ATR", "1.10"))
     
-    # Standalone Bot Polling (15m Primary Timeframe)
-    TIMEFRAME: str = os.getenv("TIMEFRAME", "15m")
+    # Standalone Bot Polling (Default 3m for 60+ entries/day)
+    TIMEFRAME: str = os.getenv("TIMEFRAME", "3m")
     POLL_INTERVAL_SECONDS: int = int(os.getenv("POLL_INTERVAL_SECONDS", "1"))
 
     # ── NEW: Smart Entry Filters ──

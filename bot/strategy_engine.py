@@ -41,16 +41,24 @@ class StrategyEngine:
         emergency_atr: float = 0.45,
         enable_live_entries: bool = True,
         enable_trend_continuation: bool = True,
-        # ── NEW: Smart Filters for Higher Accuracy ──
+        # ── High-Frequency Scalper Parameters (60+ Entries/Day) ──
+        strategy_mode: str = "scalper",
+        fast_ema_length: int = 9,
+        enable_range_breakout: bool = True,
+        enable_rsi_reversal: bool = True,
+        range_lookback: int = 5,
+        # ── Smart Filters ──
         enable_volume_filter: bool = True,
-        volume_multiplier: float = 1.5,
+        volume_multiplier: float = 1.1,
         volume_lookback: int = 20,
-        enable_adx_filter: bool = True,
+        enable_adx_filter: bool = False,
         adx_length: int = 14,
-        min_adx: float = 20.0,
-        enable_regime_filter: bool = True,
+        min_adx: float = 15.0,
+        enable_regime_filter: bool = False,
         enable_mtf_alignment: bool = False,
     ):
+        self.strategy_mode = strategy_mode.lower().strip()
+        self.fast_ema_length = fast_ema_length
         self.entry_ema_length = entry_ema_length
         self.exit_ema_length = exit_ema_length
         self.rsi_length = rsi_length
@@ -69,8 +77,11 @@ class StrategyEngine:
         self.emergency_atr = emergency_atr
         self.enable_live_entries = enable_live_entries
         self.enable_trend_continuation = enable_trend_continuation
+        self.enable_range_breakout = enable_range_breakout
+        self.enable_rsi_reversal = enable_rsi_reversal
+        self.range_lookback = range_lookback
 
-        # ── NEW: Smart Filters ──
+        # ── Smart Filters ──
         self.enable_volume_filter = enable_volume_filter
         self.volume_multiplier = volume_multiplier
         self.volume_lookback = volume_lookback
@@ -234,6 +245,7 @@ class StrategyEngine:
         if len(df) < 30:
             return SignalResult("NONE", "Insufficient Data", float(df['close'].iloc[-1]), self.position_state, self.entry_price, self.highest_price, self.lowest_price, {})
 
+        fast_ema_series = self.calculate_ema(df['close'], self.fast_ema_length)
         ema_series = self.calculate_ema(df['close'], self.entry_ema_length)
         rsi_series = self.calculate_rsi(df['close'], self.rsi_length)
         atr_series = self.calculate_atr(df, self.atr_length)
@@ -242,6 +254,7 @@ class StrategyEngine:
         live_close = float(df['close'].iloc[-1])
         live_high = float(df['high'].iloc[-1])
         live_low = float(df['low'].iloc[-1])
+        live_fema = float(fast_ema_series.iloc[-1])
         live_ema = float(ema_series.iloc[-1])
         live_rsi = float(rsi_series.iloc[-1])
         live_atr = float(atr_series.iloc[-1])
@@ -252,6 +265,7 @@ class StrategyEngine:
         prev_high = float(df['high'].iloc[-2])
         prev_low = float(df['low'].iloc[-2])
         prev_close = float(df['close'].iloc[-2])
+        prev_fema = float(fast_ema_series.iloc[-2])
         prev_ema = float(ema_series.iloc[-2])
 
         action = "NONE"
@@ -260,53 +274,77 @@ class StrategyEngine:
 
         # Only evaluate entries if currently flat (or looking to reverse)
         if self.position_state == 0:
-            ema_slope_up = live_ema >= prev_ema
-            ema_slope_down = live_ema <= prev_ema
-
-            # 1. Live EMA Cut Breakout Entry (STRICT BODY CUT ONLY - EMA must cut the candle body, not just wicks)
+            # 1. EMA Cut / Cross Entry (Fast 9 EMA cross or 21 EMA body cut)
             prev_body_top = max(prev_open, prev_close)
             prev_body_bottom = min(prev_open, prev_close)
             ema_cut_prev = (prev_body_top >= prev_ema) and (prev_body_bottom <= prev_ema)
+            ema_cross_up = (prev_fema <= prev_ema) and (live_fema > live_ema)
+            ema_cross_down = (prev_fema >= prev_ema) and (live_fema < live_ema)
             
-            # Clean Bullish Breakout: Breaks High, closes above EMA, did not violate Low
-            live_bullish_cut_breakout = ema_cut_prev and (live_high > prev_high) and (live_close > live_ema) and (live_low >= prev_low)
+            # Clean Bullish Breakout: Breaks High, closes above EMA
+            live_bullish_cut_breakout = (ema_cut_prev or ema_cross_up) and (live_high > prev_high) and (live_close > live_ema) and (live_low >= prev_low)
             
-            # Clean Bearish Breakdown: Breaks Low, closes below EMA, did not violate High
-            live_bearish_cut_breakout = ema_cut_prev and (live_low < prev_low) and (live_close < live_ema) and (live_high <= prev_high)
+            # Clean Bearish Breakdown: Breaks Low, closes below EMA
+            live_bearish_cut_breakout = (ema_cut_prev or ema_cross_down) and (live_low < prev_low) and (live_close < live_ema) and (live_high <= prev_high)
 
             if live_bullish_cut_breakout:
                 action = "BUY"
-                reason = "LiveEMACutBreakout(High)"
-                stop_loss = prev_low  # Stop loss strictly at Low of EMA cutting candle
+                reason = "LiveEMABreakout(High)"
+                stop_loss = prev_low
             elif live_bearish_cut_breakout:
                 action = "SELL"
-                reason = "LiveEMACutBreakout(Low)"
-                stop_loss = prev_high  # Stop loss strictly at High of EMA cutting candle
+                reason = "LiveEMABreakout(Low)"
+                stop_loss = prev_high
 
-            # 2. Live Trend Continuation / Momentum Re-entry (No waiting for EMA Cut)
+            # 2. Trend Continuation / Momentum Re-entry (EMA Pullback & Bounce)
             elif self.enable_trend_continuation:
-                uptrend = (live_close > live_ema) and (live_rsi >= 50) and (live_macd >= live_signal_line)
-                downtrend = (live_close < live_ema) and (live_rsi <= 50) and (live_macd <= live_signal_line)
+                uptrend = (live_close > live_ema) and (live_rsi >= 50)
+                downtrend = (live_close < live_ema) and (live_rsi <= 50)
 
-                # Bullish continuation: Higher high breakout or EMA bounce
-                if uptrend and (live_high > prev_high):
+                # Bullish continuation: Pullback to 9/21 EMA and bounce upward
+                if uptrend and (prev_low <= live_fema or prev_low <= live_ema) and (live_close > live_fema) and (live_high > prev_high):
                     action = "BUY"
-                    reason = "LiveTrendContinuation(UptrendBreakout)"
-                    stop_loss = prev_low
-                elif uptrend and (prev_low <= live_ema and live_close > live_ema):
+                    reason = "LiveTrendContinuation(Bounce)"
+                    stop_loss = min(prev_low, live_low)
+                elif uptrend and (live_high > prev_high and live_close > live_fema):
                     action = "BUY"
-                    reason = "LiveTrendContinuation(EMABounce)"
+                    reason = "LiveTrendContinuation(Breakout)"
                     stop_loss = prev_low
 
-                # Bearish continuation: Lower low breakdown or EMA rejection
-                elif downtrend and (live_low < prev_low):
+                # Bearish continuation: Pullback to 9/21 EMA and reject downward
+                elif downtrend and (prev_high >= live_fema or prev_high >= live_ema) and (live_close < live_fema) and (live_low < prev_low):
                     action = "SELL"
-                    reason = "LiveTrendContinuation(DowntrendBreakdown)"
-                    stop_loss = prev_high
-                elif downtrend and (prev_high >= live_ema and live_close < live_ema):
+                    reason = "LiveTrendContinuation(Rejection)"
+                    stop_loss = max(prev_high, live_high)
+                elif downtrend and (live_low < prev_low and live_close < live_fema):
                     action = "SELL"
-                    reason = "LiveTrendContinuation(EMARejection)"
+                    reason = "LiveTrendContinuation(Breakdown)"
                     stop_loss = prev_high
+
+            # 3. Micro Range Breakout (5-Bar High/Low Impulse)
+            if action == "NONE" and self.enable_range_breakout and len(df) >= 7:
+                recent_high = float(df['high'].iloc[-6:-1].max())
+                recent_low = float(df['low'].iloc[-6:-1].min())
+
+                if live_close > recent_high and live_rsi >= 52 and live_close > live_ema:
+                    action = "BUY"
+                    reason = "LiveRangeBreakout(5BarHigh)"
+                    stop_loss = min(prev_low, live_low)
+                elif live_close < recent_low and live_rsi <= 48 and live_close < live_ema:
+                    action = "SELL"
+                    reason = "LiveRangeBreakdown(5BarLow)"
+                    stop_loss = max(prev_high, live_high)
+
+            # 4. RSI Extreme Mean-Reversion Snap
+            if action == "NONE" and self.enable_rsi_reversal:
+                if live_rsi < 32 and live_close > float(df['open'].iloc[-1]) and live_high > prev_high:
+                    action = "BUY"
+                    reason = "LiveRSIReversal(OversoldSnap)"
+                    stop_loss = live_low
+                elif live_rsi > 68 and live_close < float(df['open'].iloc[-1]) and live_low < prev_low:
+                    action = "SELL"
+                    reason = "LiveRSIReversal(OverboughtSnap)"
+                    stop_loss = live_high
 
             target_state = 1 if action == "BUY" else (-1 if action == "SELL" else self.position_state)
 
@@ -518,6 +556,7 @@ class StrategyEngine:
         for col in ['open', 'high', 'low', 'close']:
             data[col] = data[col].astype(float)
             
+        data['fast_ema'] = self.calculate_ema(data['close'], self.fast_ema_length)
         data['entry_ema'] = self.calculate_ema(data['close'], self.entry_ema_length)
         data['exit_ema'] = self.calculate_ema(data['close'], self.exit_ema_length)
         data['rsi'] = self.calculate_rsi(data['close'], self.rsi_length)
@@ -528,10 +567,14 @@ class StrategyEngine:
         data['macd_signal'] = macd_signal
         data['macd_hist'] = macd_hist
 
-        # ── NEW: ADX for trend strength filtering ──
+        # ── Micro Range high/low for breakout scalps ──
+        data['range_high'] = data['high'].shift(1).rolling(self.range_lookback, min_periods=1).max()
+        data['range_low'] = data['low'].shift(1).rolling(self.range_lookback, min_periods=1).min()
+
+        # ── ADX for trend strength filtering ──
         data['adx'] = self.calculate_adx(data, self.adx_length)
 
-        # ── NEW: Volume average for breakout confirmation ──
+        # ── Volume average for breakout confirmation ──
         if 'volume' in data.columns:
             data['volume'] = data['volume'].astype(float)
             data['vol_avg'] = data['volume'].rolling(self.volume_lookback, min_periods=1).mean()
@@ -562,6 +605,7 @@ class StrategyEngine:
             prev_entry_ema = data['entry_ema'].iloc[i - 1]
             
             # Current bar values (bar index 0 in Pine Script)
+            curr_open = data['open'].iloc[i]
             curr_high = data['high'].iloc[i]
             curr_low = data['low'].iloc[i]
             curr_close = data['close'].iloc[i]
@@ -572,22 +616,57 @@ class StrategyEngine:
             curr_macd_line = data['macd_line'].iloc[i]
             curr_macd_signal = data['macd_signal'].iloc[i]
             
-            # 1. EMA Cut Candle condition on previous candle (STRICT BODY CUT ONLY)
+            curr_fema = data['fast_ema'].iloc[i]
+            prev_fema = data['fast_ema'].iloc[i - 1]
+
+            # 1. EMA Cut / Cross Entry (Fast 9 EMA cross or 21 EMA body cut)
             prev_body_top = max(prev_open, prev_close)
             prev_body_bottom = min(prev_open, prev_close)
             ema_cutting_candle = (prev_body_top >= prev_entry_ema) and (prev_body_bottom <= prev_entry_ema)
+            ema_cross_up = (prev_fema <= prev_entry_ema) and (curr_fema > curr_entry_ema)
+            ema_cross_down = (prev_fema >= prev_entry_ema) and (curr_fema < curr_entry_ema)
             
             # 2. Raw Buy/Sell triggers (Strict Directional Breakout)
             raw_buy = False
             raw_sell = False
             
-            if ema_cutting_candle:
+            if ema_cutting_candle or ema_cross_up or ema_cross_down:
                 clean_break_high = (curr_high > prev_high) and (curr_close > curr_entry_ema) and (curr_low >= prev_low)
                 clean_break_low = (curr_low < prev_low) and (curr_close < curr_entry_ema) and (curr_high <= prev_high)
                 
                 if clean_break_high:
                     raw_buy = True
                 elif clean_break_low:
+                    raw_sell = True
+
+            # 2. Trend Continuation Pullback & Bounce
+            if not raw_buy and not raw_sell and self.enable_trend_continuation:
+                uptrend = (curr_close > curr_entry_ema) and (curr_rsi >= 50)
+                downtrend = (curr_close < curr_entry_ema) and (curr_rsi <= 50)
+
+                if uptrend and (prev_low <= curr_fema or prev_low <= curr_entry_ema) and (curr_close > curr_fema) and (curr_high > prev_high):
+                    raw_buy = True
+                elif uptrend and (curr_high > prev_high and curr_close > curr_fema):
+                    raw_buy = True
+                elif downtrend and (prev_high >= curr_fema or prev_high >= curr_entry_ema) and (curr_close < curr_fema) and (curr_low < prev_low):
+                    raw_sell = True
+                elif downtrend and (curr_low < prev_low and curr_close < curr_fema):
+                    raw_sell = True
+
+            # 3. Micro Range Breakout (5-Bar High/Low Impulse)
+            if not raw_buy and not raw_sell and self.enable_range_breakout and 'range_high' in data.columns:
+                r_high = float(data['range_high'].iloc[i])
+                r_low = float(data['range_low'].iloc[i])
+                if curr_close > r_high and curr_rsi >= 52 and curr_close > curr_entry_ema:
+                    raw_buy = True
+                elif curr_close < r_low and curr_rsi <= 48 and curr_close < curr_entry_ema:
+                    raw_sell = True
+
+            # 4. RSI Extreme Reversal Snap
+            if not raw_buy and not raw_sell and self.enable_rsi_reversal:
+                if curr_rsi < 32 and curr_close > curr_open and curr_high > prev_high:
+                    raw_buy = True
+                elif curr_rsi > 68 and curr_close < curr_open and curr_low < prev_low:
                     raw_sell = True
 
             # ── NEW: Smart Filters — reject false breakouts before entry ──
@@ -823,6 +902,7 @@ class StrategyEngine:
         prev_close = float(data['close'].iloc[i - 1])
         prev_entry_ema = float(data['entry_ema'].iloc[i - 1])
 
+        curr_open = float(data['open'].iloc[i])
         curr_high = float(data['high'].iloc[i])
         curr_low = float(data['low'].iloc[i])
         curr_close = float(data['close'].iloc[i])
@@ -833,21 +913,56 @@ class StrategyEngine:
         curr_macd_line = float(data['macd_line'].iloc[i])
         curr_macd_signal = float(data['macd_signal'].iloc[i])
 
-        # 1. EMA Cut Candle condition on previous candle (STRICT BODY CUT ONLY)
+        curr_fema = float(data['fast_ema'].iloc[i])
+        prev_fema = float(data['fast_ema'].iloc[i - 1])
+
+        # 1. EMA Cut / Cross Entry (Fast 9 EMA cross or 21 EMA body cut)
         prev_body_top = max(prev_open, prev_close)
         prev_body_bottom = min(prev_open, prev_close)
         ema_cutting_candle = (prev_body_top >= prev_entry_ema) and (prev_body_bottom <= prev_entry_ema)
+        ema_cross_up = (prev_fema <= prev_entry_ema) and (curr_fema > curr_entry_ema)
+        ema_cross_down = (prev_fema >= prev_entry_ema) and (curr_fema < curr_entry_ema)
 
         raw_buy = False
         raw_sell = False
 
-        if ema_cutting_candle:
+        if ema_cutting_candle or ema_cross_up or ema_cross_down:
             clean_break_high = (curr_high > prev_high) and (curr_close > curr_entry_ema) and (curr_low >= prev_low)
             clean_break_low = (curr_low < prev_low) and (curr_close < curr_entry_ema) and (curr_high <= prev_high)
 
             if clean_break_high:
                 raw_buy = True
             elif clean_break_low:
+                raw_sell = True
+
+        # 2. Trend Continuation Pullback & Bounce
+        if not raw_buy and not raw_sell and self.enable_trend_continuation:
+            uptrend = (curr_close > curr_entry_ema) and (curr_rsi >= 50)
+            downtrend = (curr_close < curr_entry_ema) and (curr_rsi <= 50)
+
+            if uptrend and (prev_low <= curr_fema or prev_low <= curr_entry_ema) and (curr_close > curr_fema) and (curr_high > prev_high):
+                raw_buy = True
+            elif uptrend and (curr_high > prev_high and curr_close > curr_fema):
+                raw_buy = True
+            elif downtrend and (prev_high >= curr_fema or prev_high >= curr_entry_ema) and (curr_close < curr_fema) and (curr_low < prev_low):
+                raw_sell = True
+            elif downtrend and (curr_low < prev_low and curr_close < curr_fema):
+                raw_sell = True
+
+        # 3. Micro Range Breakout (5-Bar High/Low Impulse)
+        if not raw_buy and not raw_sell and self.enable_range_breakout and 'range_high' in data.columns:
+            r_high = float(data['range_high'].iloc[i])
+            r_low = float(data['range_low'].iloc[i])
+            if curr_close > r_high and curr_rsi >= 52 and curr_close > curr_entry_ema:
+                raw_buy = True
+            elif curr_close < r_low and curr_rsi <= 48 and curr_close < curr_entry_ema:
+                raw_sell = True
+
+        # 4. RSI Extreme Reversal Snap
+        if not raw_buy and not raw_sell and self.enable_rsi_reversal:
+            if curr_rsi < 32 and curr_close > curr_open and curr_high > prev_high:
+                raw_buy = True
+            elif curr_rsi > 68 and curr_close < curr_open and curr_low < prev_low:
                 raw_sell = True
 
         # ── NEW: Smart Filters for get_latest_signal ──

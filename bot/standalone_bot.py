@@ -435,7 +435,12 @@ class StandaloneBot:
             emergency_atr=config.EMERGENCY_ATR,
             enable_live_entries=config.ENABLE_LIVE_ENTRIES,
             enable_trend_continuation=config.ENABLE_TREND_CONTINUATION,
-            # ── NEW: Smart Filters ──
+            # ── High-Frequency Scalper Parameters (60+ Entries/Day) ──
+            strategy_mode=config.STRATEGY_MODE,
+            fast_ema_length=config.FAST_EMA_LENGTH,
+            enable_range_breakout=config.ENABLE_RANGE_BREAKOUT,
+            enable_rsi_reversal=config.ENABLE_RSI_REVERSAL,
+            # ── Smart Filters ──
             enable_volume_filter=config.ENABLE_VOLUME_FILTER,
             volume_multiplier=config.VOLUME_MULTIPLIER,
             volume_lookback=config.VOLUME_LOOKBACK,
