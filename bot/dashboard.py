@@ -760,6 +760,65 @@ DASHBOARD_HTML = """
             return `${sign}$${abs.toFixed(4)}`;
         }
 
+        function formatTimeIST(tsStr) {
+            if (!tsStr) return '--';
+            try {
+                const d = new Date(tsStr);
+                if (isNaN(d.getTime())) return tsStr;
+                return d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' IST';
+            } catch(e) {
+                return tsStr;
+            }
+        }
+
+        function reconstructTradesFromFills(fills, contractVal) {
+            if (!fills || fills.length === 0) return [];
+            // Sort fills chronologically (oldest to newest)
+            const sorted = [...fills].sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+            const trades = [];
+            let active = null;
+
+            for (const f of sorted) {
+                const side = (f.side || 'buy').toUpperCase();
+                const price = parseFloat(f.price || 0);
+                const size = parseFloat(f.size || 1);
+                const fee = parseFloat(f.trading_fee || f.fee || f.commission || f.cashflow || 0) || (price * size * contractVal * 0.0005);
+                const time = formatTimeIST(f.created_at);
+
+                if (!active) {
+                    active = { side, price, size, fee, time };
+                } else if (active.side !== side) {
+                    // Match Entry and Exit fill to form a closed Round-Trip Trade
+                    const isLong = active.side === 'BUY';
+                    const priceDiff = isLong ? (price - active.price) : (active.price - price);
+                    const gross = priceDiff * size * contractVal;
+                    const totalFee = active.fee + fee;
+                    const net = gross - totalFee;
+                    const isWin = net > 0;
+
+                    trades.unshift({
+                        entry_time: active.time,
+                        exit_time: time,
+                        side: active.side,
+                        entry_price: active.price,
+                        exit_price: price,
+                        price_diff: priceDiff,
+                        size: size,
+                        gross_pnl: gross,
+                        fee: totalFee,
+                        net_pnl: net,
+                        net_pnl_inr: net * USD_TO_INR,
+                        is_profit: isWin,
+                        reason: isLong ? "Long Closed" : "Short Closed"
+                    });
+                    active = null;
+                } else {
+                    active = { side, price, size, fee, time };
+                }
+            }
+            return trades;
+        }
+
         function renderData(data) {
             document.getElementById('connection-status').innerText = "Delta India Connected";
             document.getElementById('connection-status').style.color = "var(--emerald)";
@@ -837,16 +896,19 @@ DASHBOARD_HTML = """
             document.getElementById('active-stop-loss').innerText = activeSl > 0 ? `$${activeSl.toFixed(2)}` : 'None (Flat)';
             document.getElementById('trailing-status').innerText = data.breakeven_locked ? '🛡️ Breakeven: LOCKED (+Fee Covered)' : `Breakeven: Ready at +$${beDist.toFixed(2)}`;
 
-            // 3. Performance Statistics
-            const stats = data.stats || {};
-            const totalNet = stats.total_net_pnl || 0;
-            const totalNetInr = stats.total_net_pnl_inr || 0;
-            const totalGross = stats.total_gross_pnl || 0;
-            const totalFees = stats.total_fees || 0;
-            const winRate = stats.win_rate || 0;
-            const profitableCount = stats.profitable_trades || 0;
-            const lossCount = stats.loss_trades || 0;
-            const totalTrades = stats.total_trades || 0;
+            // 3. Trades Reconstructor & Statistics
+            const rawTrades = (data.completed_trades && data.completed_trades.length > 0) ? data.completed_trades : [];
+            const reconstructed = reconstructTradesFromFills(data.exchange_fills, contractVal);
+            const allTrades = rawTrades.length >= reconstructed.length ? rawTrades : reconstructed;
+
+            const totalTrades = allTrades.length;
+            const profitableCount = allTrades.filter(t => t.is_profit || (parseFloat(t.net_pnl || 0) > 0)).length;
+            const lossCount = totalTrades - profitableCount;
+            const winRate = totalTrades > 0 ? (profitableCount / totalTrades) * 100 : 0;
+            const totalGross = allTrades.reduce((acc, t) => acc + parseFloat(t.gross_pnl || 0), 0);
+            const totalFees = allTrades.reduce((acc, t) => acc + parseFloat(t.fee || 0), 0);
+            const totalNet = totalGross - totalFees;
+            const totalNetInr = totalNet * USD_TO_INR;
 
             const netPnlElem = document.getElementById('total-net-pnl');
             netPnlElem.innerText = formatUsd(totalNet, true);
@@ -891,13 +953,12 @@ DASHBOARD_HTML = """
 
             // 6. TAB 1: Completed Trades Table
             const completedTbody = document.getElementById('completed-trades-body');
-            const trades = data.completed_trades || [];
-            document.getElementById('completed-count-badge').innerText = trades.length;
+            document.getElementById('completed-count-badge').innerText = allTrades.length;
 
-            if (trades.length > 0) {
-                completedTbody.innerHTML = trades.map(t => {
+            if (allTrades.length > 0) {
+                completedTbody.innerHTML = allTrades.map(t => {
                     const gross = parseFloat(t.gross_pnl || 0);
-                    const fee = parseFloat(t.fee || 0.0143);
+                    const fee = parseFloat(t.fee || 0);
                     const net = parseFloat(t.net_pnl || 0);
                     const netInr = parseFloat(t.net_pnl_inr || (net * USD_TO_INR));
                     const isWin = t.is_profit || net > 0;
@@ -936,7 +997,7 @@ DASHBOARD_HTML = """
             if (logs.length > 0) {
                 logsTbody.innerHTML = logs.map(l => {
                     const gross = parseFloat(l.gross_pnl || 0);
-                    const fee = parseFloat(l.fee || 0.0143);
+                    const fee = parseFloat(l.fee || 0);
                     const net = parseFloat(l.net_pnl || 0);
                     const isClosed = l.status === 'CLOSED';
 
@@ -962,7 +1023,7 @@ DASHBOARD_HTML = """
                 }).join('');
             }
 
-            // 8. TAB 3: Delta Exchange Real Fills
+            // 8. TAB 3: Delta Exchange Real Fills (With Accurate Fee Calculation)
             const fillsTbody = document.getElementById('fills-table-body');
             const fills = data.exchange_fills || [];
             document.getElementById('fills-count-badge').innerText = fills.length;
@@ -970,15 +1031,19 @@ DASHBOARD_HTML = """
             if (fills.length > 0) {
                 fillsTbody.innerHTML = fills.map(f => {
                     const side = (f.side || 'buy').toUpperCase();
-                    const fee = parseFloat(f.fee || 0);
+                    const price = parseFloat(f.price || 0);
+                    const size = parseFloat(f.size || 1);
+                    const fee = parseFloat(f.trading_fee || f.fee || f.commission || f.cashflow || 0) || (price * size * contractVal * 0.0005);
+                    const timeStr = formatTimeIST(f.created_at);
+
                     return `
                         <tr>
-                            <td style="color: var(--text-muted);">${f.created_at || '--'}</td>
+                            <td style="color: var(--text-muted);">${timeStr} <span style="font-size: 0.7rem; opacity: 0.6;">(${f.created_at || ''})</span></td>
                             <td style="font-weight: 600;">${f.symbol || data.symbol}</td>
                             <td><span style="color: ${side === 'BUY' ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 700;">${side}</span></td>
-                            <td style="font-weight: 600;">$${parseFloat(f.price || 0).toFixed(2)}</td>
-                            <td>${f.size || 1} Lot</td>
-                            <td style="color: var(--amber); font-weight: 600;">-$${fee.toFixed(4)}</td>
+                            <td style="font-weight: 600;">$${price.toFixed(2)}</td>
+                            <td>${size} Lot</td>
+                            <td style="color: var(--amber); font-weight: 600;">-${formatUsd(fee)}</td>
                             <td><span class="badge-pill badge-flat">${f.role || 'taker'}</span></td>
                         </tr>
                     `;
