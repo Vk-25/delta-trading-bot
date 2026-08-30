@@ -738,23 +738,40 @@ class StrategyEngine:
                 long_profit_atr = (curr_close - self.entry_price) / curr_atr if curr_atr > 0 else 0
                 protection_active = self.enable_protection and (long_profit_atr >= self.activation_atr)
                 
-                long_candidate_stop = max(self.entry_price, self.highest_price - (curr_atr * self.trail_atr))
+                # 1. Scalp Take Profit (+0.85 ATR target)
+                tp_exit = self.take_profit_atr > 0 and (long_profit_atr >= self.take_profit_atr)
+                if tp_exit:
+                    exit_reasons.append(f"TakeProfit(+{long_profit_atr:.2f} ATR)")
+
+                # 2. Auto-Breakeven Lock (+Fees)
+                if self.enable_breakeven and (long_profit_atr >= self.breakeven_atr):
+                    be_level = self.entry_price + self.fee_buffer
+                    self.long_trail_stop = max(self.long_trail_stop or 0, be_level)
+                    self.breakeven_locked = True
+
+                # 3. Dynamic Trailing Stop
+                long_candidate_stop = max(self.entry_price + (self.fee_buffer if self.breakeven_locked else 0), self.highest_price - (curr_atr * self.trail_atr))
                 if protection_active:
                     if self.long_trail_stop is None:
                         self.long_trail_stop = long_candidate_stop
                     else:
                         self.long_trail_stop = max(self.long_trail_stop, long_candidate_stop)
 
-                protection_exit = protection_active and (self.long_trail_stop is not None) and (curr_close <= self.long_trail_stop)
+                protection_exit = (self.long_trail_stop is not None) and (curr_close <= self.long_trail_stop)
                 if protection_exit:
                     exit_reasons.append(f"ProfitProtection(stop={self.long_trail_stop:.2f})")
                     
-                # Emergency Loss Exit
+                # 4. Emergency Loss Exit
                 emergency_exit = self.enable_emergency and (long_profit_atr <= -self.emergency_atr)
                 if emergency_exit:
                     exit_reasons.append(f"EmergencyLoss({long_profit_atr:.2f} ATR)")
+
+                # 5. Fast Scalp Micro-Exit (9 EMA breakdown + momentum loss)
+                scalp_micro_exit = (self.strategy_mode == "scalper") and (curr_close < curr_fema) and (curr_rsi < 48) and (long_profit_atr > 0.20)
+                if scalp_micro_exit:
+                    exit_reasons.append("ScalpMicroExit(9EMABreak)")
                     
-                if smart_exit or opposite_exit or protection_exit or emergency_exit:
+                if smart_exit or opposite_exit or protection_exit or emergency_exit or tp_exit or scalp_micro_exit:
                     exit_long = True
 
             elif self.position_state == -1:
@@ -784,15 +801,26 @@ class StrategyEngine:
                 # Profit Protection Trailing Stop
                 short_profit_atr = (self.entry_price - curr_close) / curr_atr if curr_atr > 0 else 0
                 protection_active = self.enable_protection and (short_profit_atr >= self.activation_atr)
+
+                # 1. Scalp Take Profit (+0.85 ATR target)
+                tp_exit = self.take_profit_atr > 0 and (short_profit_atr >= self.take_profit_atr)
+                if tp_exit:
+                    exit_reasons.append(f"TakeProfit(+{short_profit_atr:.2f} ATR)")
+
+                # 2. Auto-Breakeven Lock (+Fees)
+                if self.enable_breakeven and (short_profit_atr >= self.breakeven_atr):
+                    be_level = self.entry_price - self.fee_buffer
+                    self.short_trail_stop = min(self.short_trail_stop or float('inf'), be_level)
+                    self.breakeven_locked = True
                 
-                short_candidate_stop = min(self.entry_price, self.lowest_price + (curr_atr * self.trail_atr))
+                short_candidate_stop = min(self.entry_price - (self.fee_buffer if self.breakeven_locked else 0), self.lowest_price + (curr_atr * self.trail_atr))
                 if protection_active:
                     if self.short_trail_stop is None:
                         self.short_trail_stop = short_candidate_stop
                     else:
                         self.short_trail_stop = min(self.short_trail_stop, short_candidate_stop)
 
-                protection_exit = protection_active and (self.short_trail_stop is not None) and (curr_close >= self.short_trail_stop)
+                protection_exit = (self.short_trail_stop is not None) and (curr_close >= self.short_trail_stop)
                 if protection_exit:
                     exit_reasons.append(f"ProfitProtection(stop={self.short_trail_stop:.2f})")
                     
@@ -800,8 +828,13 @@ class StrategyEngine:
                 emergency_exit = self.enable_emergency and (short_profit_atr <= -self.emergency_atr)
                 if emergency_exit:
                     exit_reasons.append(f"EmergencyLoss({short_profit_atr:.2f} ATR)")
+
+                # Fast Scalp Micro-Exit (9 EMA breakout + momentum flip)
+                scalp_micro_exit = (self.strategy_mode == "scalper") and (curr_close > curr_fema) and (curr_rsi > 52) and (short_profit_atr > 0.20)
+                if scalp_micro_exit:
+                    exit_reasons.append("ScalpMicroExit(9EMABreak)")
                     
-                if smart_exit or opposite_exit or protection_exit or emergency_exit:
+                if smart_exit or opposite_exit or protection_exit or emergency_exit or tp_exit or scalp_micro_exit:
                     exit_short = True
 
             # 4. Handle Position Exits
@@ -1015,16 +1048,26 @@ class StrategyEngine:
 
             if self.entry_price:
                 profit_atr = (curr_close - self.entry_price) / curr_atr if curr_atr > 0 else 0
+                tp_exit = self.take_profit_atr > 0 and (profit_atr >= self.take_profit_atr)
                 emergency_exit = self.enable_emergency and (profit_atr <= -self.emergency_atr)
+                scalp_micro_exit = (self.strategy_mode == "scalper") and (curr_close < curr_fema) and (curr_rsi < 48) and (profit_atr > 0.20)
             else:
+                tp_exit = False
                 emergency_exit = False
+                scalp_micro_exit = False
 
-            if smart_exit:
+            if tp_exit:
+                action = "EXIT_LONG"
+                reason = f"TakeProfit(+{profit_atr:.2f} ATR)"
+            elif smart_exit:
                 action = "EXIT_LONG"
                 reason = f"SmartExit(ema_break+score={long_score}/{self.exit_confirmations})"
             elif opposite_exit:
                 action = "EXIT_LONG"
                 reason = "OppositeSignal(SELL)"
+            elif scalp_micro_exit:
+                action = "EXIT_LONG"
+                reason = "ScalpMicroExit(9EMABreak)"
             elif emergency_exit:
                 action = "EXIT_LONG"
                 reason = "EmergencyLoss"
@@ -1048,16 +1091,26 @@ class StrategyEngine:
 
             if self.entry_price:
                 profit_atr = (self.entry_price - curr_close) / curr_atr if curr_atr > 0 else 0
+                tp_exit = self.take_profit_atr > 0 and (profit_atr >= self.take_profit_atr)
                 emergency_exit = self.enable_emergency and (profit_atr <= -self.emergency_atr)
+                scalp_micro_exit = (self.strategy_mode == "scalper") and (curr_close > curr_fema) and (curr_rsi > 52) and (profit_atr > 0.20)
             else:
+                tp_exit = False
                 emergency_exit = False
+                scalp_micro_exit = False
 
-            if smart_exit:
+            if tp_exit:
+                action = "EXIT_SHORT"
+                reason = f"TakeProfit(+{profit_atr:.2f} ATR)"
+            elif smart_exit:
                 action = "EXIT_SHORT"
                 reason = f"SmartExit(ema_break+score={short_score}/{self.exit_confirmations})"
             elif opposite_exit:
                 action = "EXIT_SHORT"
                 reason = "OppositeSignal(BUY)"
+            elif scalp_micro_exit:
+                action = "EXIT_SHORT"
+                reason = "ScalpMicroExit(9EMABreak)"
             elif emergency_exit:
                 action = "EXIT_SHORT"
                 reason = "EmergencyLoss"
