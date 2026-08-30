@@ -504,7 +504,7 @@ DASHBOARD_HTML = """
             <div class="card" style="border-left: 3px solid var(--amber);">
                 <div class="card-label">
                     <span>Total Fees Paid</span>
-                    <span class="badge-pill badge-fee mono">$0.0143 / trade</span>
+                    <span class="badge-pill badge-fee mono">$0.0144 / order ($0.0288 RT)</span>
                 </div>
                 <div class="card-value mono" style="color: var(--amber);" id="total-fees">$0.0000</div>
                 <div class="card-sub mono" id="total-fees-inr">≈ ₹0.00 INR in Fees</div>
@@ -750,11 +750,36 @@ DASHBOARD_HTML = """
             }
         }
 
+        function formatPnl(val, showSign = true) {
+            const num = parseFloat(val) || 0;
+            const sign = showSign ? (num > 0 ? '+' : (num < 0 ? '-' : '')) : (num < 0 ? '-' : '');
+            const abs = Math.abs(num);
+            return `${sign}$${abs.toFixed(4)}`;
+        }
+
+        function formatFee(val) {
+            const num = Math.abs(parseFloat(val) || 0);
+            return `$${num.toFixed(4)}`;
+        }
+
+        function formatPrice(val) {
+            const num = parseFloat(val) || 0;
+            if (num === 0) return '--';
+            return `$${num.toFixed(2)}`;
+        }
+
+        function formatInr(val, showSign = false) {
+            const num = parseFloat(val) || 0;
+            const sign = showSign ? (num > 0 ? '+' : (num < 0 ? '-' : '')) : (num < 0 ? '-' : '');
+            const abs = Math.abs(num);
+            return `${sign}₹${abs.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        }
+
         function formatUsd(val, showSign = false) {
             const num = parseFloat(val) || 0;
             const sign = showSign ? (num > 0 ? '+' : (num < 0 ? '-' : '')) : (num < 0 ? '-' : '');
             const abs = Math.abs(num);
-            if (abs >= 0.01 || abs === 0) {
+            if (abs >= 100 || abs === 0) {
                 return `${sign}$${abs.toFixed(2)}`;
             }
             return `${sign}$${abs.toFixed(4)}`;
@@ -763,7 +788,15 @@ DASHBOARD_HTML = """
         function formatTimeIST(tsStr) {
             if (!tsStr) return '--';
             try {
-                const d = new Date(tsStr);
+                let d;
+                if (typeof tsStr === 'number') {
+                    d = new Date(tsStr > 1e11 ? tsStr : tsStr * 1000);
+                } else if (!isNaN(Number(tsStr))) {
+                    const num = Number(tsStr);
+                    d = new Date(num > 1e11 ? num : num * 1000);
+                } else {
+                    d = new Date(tsStr);
+                }
                 if (isNaN(d.getTime())) return tsStr;
                 return d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' IST';
             } catch(e) {
@@ -782,7 +815,10 @@ DASHBOARD_HTML = """
                 const side = (f.side || 'buy').toUpperCase();
                 const price = parseFloat(f.price || 0);
                 const size = parseFloat(f.size || 1);
-                const fee = parseFloat(f.trading_fee || f.fee || f.commission || f.cashflow || 0) || (price * size * contractVal * 0.0005);
+                const rawFee = f.trading_fee ?? f.fee ?? f.commission ?? f.cashflow;
+                const fee = (rawFee !== undefined && rawFee !== null && rawFee !== '')
+                    ? Math.abs(parseFloat(rawFee))
+                    : (price * size * contractVal * 0.0005 || 0.0144);
                 const time = formatTimeIST(f.created_at);
 
                 if (!active) {
@@ -827,17 +863,24 @@ DASHBOARD_HTML = """
             const availUsd = data.balances?.available_usd || 0;
             const availInr = availUsd * USD_TO_INR;
             document.getElementById('available-balance').innerText = `$${availUsd.toFixed(2)}`;
-            document.getElementById('inr-balance').innerText = `≈ ₹${availInr.toLocaleString('en-IN', {maximumFractionDigits: 2})} INR (Available)`;
+            document.getElementById('inr-balance').innerText = `≈ ${formatInr(availInr)} INR (Available)`;
 
             // 2. Positions & Dynamic Multiplier
             const pos = data.position || {};
             const size = parseFloat(pos.size || 0);
             const entryPrice = parseFloat(pos.entry_price || 0);
-            const markPrice = data.market?.price || entryPrice;
+            const markPrice = parseFloat(data.market?.price || entryPrice);
             const contractVal = parseFloat(data.contract_value || (data.symbol?.includes('BTC') ? 0.001 : (data.symbol?.includes('SOL') ? 1.0 : 0.01)));
             const leverage = parseFloat(data.leverage || 100);
             const marginUsed = parseFloat(pos.margin || 0) || (size !== 0 && entryPrice > 0 ? (entryPrice * contractVal * Math.abs(size)) / leverage : 0);
-            const pnlUsd = parseFloat(pos.unrealized_pnl || 0);
+            
+            // Unrealized PnL: use position field or calculate from markPrice vs entryPrice
+            let pnlUsd = parseFloat(pos.unrealized_pnl);
+            if (isNaN(pnlUsd) || (pnlUsd === 0 && size !== 0 && entryPrice > 0 && markPrice > 0)) {
+                const diff = size > 0 ? (markPrice - entryPrice) : (entryPrice - markPrice);
+                pnlUsd = diff * Math.abs(size) * contractVal;
+            }
+            if (size === 0) pnlUsd = 0.0;
             const pnlInr = pnlUsd * USD_TO_INR;
             const roiPct = marginUsed > 0 ? (pnlUsd / marginUsed) * 100 : 0;
 
@@ -857,15 +900,15 @@ DASHBOARD_HTML = """
             document.getElementById('entry-price-display').innerText = entryPrice > 0 ? `Entry: $${entryPrice.toFixed(2)}` : 'Entry: Flat';
             document.getElementById('pos-symbol').innerText = data.symbol || 'ETHUSD';
             document.getElementById('mark-price').innerText = markPrice > 0 ? `$${markPrice.toFixed(2)}` : '--';
-            document.getElementById('initial-margin').innerText = marginUsed > 0 ? `$${marginUsed.toFixed(2)} (₹${(marginUsed*USD_TO_INR).toFixed(1)})` : '$0.00';
+            document.getElementById('initial-margin').innerText = marginUsed > 0 ? `$${marginUsed.toFixed(2)} (${formatInr(marginUsed * USD_TO_INR)})` : '$0.00';
 
             // Unrealized PnL display
             const pnlElem = document.getElementById('live-pnl');
             const pnlInrElem = document.getElementById('live-pnl-inr');
             const roiBadge = document.getElementById('roi-badge');
 
-            pnlElem.innerText = formatUsd(pnlUsd, true);
-            pnlInrElem.innerText = `≈ ${pnlInr >= 0 ? '+' : ''}₹${pnlInr.toFixed(2)} INR`;
+            pnlElem.innerText = formatPnl(pnlUsd, true);
+            pnlInrElem.innerText = `≈ ${formatInr(pnlInr, true)} INR`;
 
             if (pnlUsd > 0) {
                 pnlElem.className = "card-value mono positive";
@@ -901,20 +944,31 @@ DASHBOARD_HTML = """
             const reconstructed = reconstructTradesFromFills(data.exchange_fills, contractVal);
             const allTrades = rawTrades.length >= reconstructed.length ? rawTrades : reconstructed;
 
-            const totalTrades = allTrades.length;
-            const profitableCount = allTrades.filter(t => t.is_profit || (parseFloat(t.net_pnl || 0) > 0)).length;
-            const lossCount = totalTrades - profitableCount;
-            const winRate = totalTrades > 0 ? (profitableCount / totalTrades) * 100 : 0;
-            const totalGross = allTrades.reduce((acc, t) => acc + parseFloat(t.gross_pnl || 0), 0);
-            const totalFees = allTrades.reduce((acc, t) => acc + parseFloat(t.fee || 0), 0);
-            const totalNet = totalGross - totalFees;
-            const totalNetInr = totalNet * USD_TO_INR;
+            let totalTrades = allTrades.length;
+            let profitableCount = allTrades.filter(t => (t.is_profit !== undefined ? t.is_profit : (parseFloat(t.net_pnl || 0) > 0))).length;
+            let lossCount = totalTrades - profitableCount;
+            let winRate = totalTrades > 0 ? (profitableCount / totalTrades) * 100 : 0;
+            let totalGross = allTrades.reduce((acc, t) => acc + parseFloat(t.gross_pnl || 0), 0);
+            let totalFees = allTrades.reduce((acc, t) => acc + Math.abs(parseFloat(t.fee || 0)), 0);
+            let totalNet = totalGross - totalFees;
+            let totalNetInr = totalNet * USD_TO_INR;
+
+            if (totalTrades === 0 && data.stats && data.stats.total_trades > 0) {
+                totalTrades = data.stats.total_trades;
+                profitableCount = data.stats.profitable_trades || 0;
+                lossCount = data.stats.loss_trades || 0;
+                winRate = data.stats.win_rate || 0;
+                totalFees = data.stats.total_fees || 0;
+                totalGross = data.stats.total_gross_pnl || 0;
+                totalNet = data.stats.total_net_pnl || 0;
+                totalNetInr = data.stats.total_net_pnl_inr || (totalNet * USD_TO_INR);
+            }
 
             const netPnlElem = document.getElementById('total-net-pnl');
-            netPnlElem.innerText = formatUsd(totalNet, true);
+            netPnlElem.innerText = formatPnl(totalNet, true);
             netPnlElem.className = totalNet >= 0 ? "card-value mono positive" : "card-value mono negative";
 
-            document.getElementById('total-net-pnl-inr').innerText = `≈ ${totalNetInr >= 0 ? '+' : ''}₹${totalNetInr.toFixed(2)} INR Net Profit`;
+            document.getElementById('total-net-pnl-inr').innerText = `≈ ${formatInr(totalNetInr, true)} INR Net Profit`;
             document.getElementById('trade-outcomes').innerText = `${profitableCount} Won / ${lossCount} Lost`;
             document.getElementById('total-trades-count').innerText = `${totalTrades} Total Completed Trade${totalTrades === 1 ? '' : 's'}`;
             
@@ -922,9 +976,12 @@ DASHBOARD_HTML = """
             winBadge.innerText = `${winRate.toFixed(1)}% Win Rate`;
             winBadge.className = winRate >= 50 ? "badge-pill badge-buy mono" : "badge-pill badge-sell mono";
 
-            document.getElementById('total-fees').innerText = formatUsd(totalFees);
-            document.getElementById('total-fees-inr').innerText = `≈ ₹${(totalFees * USD_TO_INR).toFixed(2)} INR in Fees`;
-            document.getElementById('total-gross-pnl').innerText = formatUsd(totalGross, true);
+            document.getElementById('total-fees').innerText = formatFee(totalFees);
+            document.getElementById('total-fees-inr').innerText = `≈ ${formatInr(totalFees * USD_TO_INR)} INR in Fees`;
+            
+            const grossPnlElem = document.getElementById('total-gross-pnl');
+            grossPnlElem.innerText = formatPnl(totalGross, true);
+            grossPnlElem.className = totalGross >= 0 ? "card-value mono positive" : "card-value mono negative";
 
             // 4. Indicators
             document.getElementById('val-ema').innerText = data.market?.ema ? data.market.ema.toFixed(2) : '--';
@@ -958,14 +1015,14 @@ DASHBOARD_HTML = """
             if (allTrades.length > 0) {
                 completedTbody.innerHTML = allTrades.map(t => {
                     const gross = parseFloat(t.gross_pnl || 0);
-                    const fee = parseFloat(t.fee || 0);
-                    const net = parseFloat(t.net_pnl || 0);
-                    const netInr = parseFloat(t.net_pnl_inr || (net * USD_TO_INR));
-                    const isWin = t.is_profit || net > 0;
+                    const fee = Math.abs(parseFloat(t.fee || 0));
+                    const net = parseFloat(t.net_pnl !== undefined ? t.net_pnl : (gross - fee));
+                    const netInr = parseFloat(t.net_pnl_inr !== undefined ? t.net_pnl_inr : (net * USD_TO_INR));
+                    const isWin = t.is_profit !== undefined ? t.is_profit : (net > 0);
                     const side = (t.side || 'BUY').toUpperCase();
                     const sideCol = side === 'BUY' ? 'var(--emerald)' : 'var(--crimson)';
                     const sideLabel = side === 'BUY' ? 'LONG 🟢' : 'SHORT 🔴';
-                    const diff = parseFloat(t.price_diff || 0);
+                    const diff = parseFloat(t.price_diff !== undefined ? t.price_diff : ((side === 'BUY' ? 1 : -1) * (parseFloat(t.exit_price || 0) - parseFloat(t.entry_price || 0))));
                     const diffSign = diff > 0 ? '+' : '';
 
                     return `
@@ -975,10 +1032,10 @@ DASHBOARD_HTML = """
                             <td style="font-weight: 600;">$${parseFloat(t.entry_price || 0).toFixed(2)} → $${parseFloat(t.exit_price || 0).toFixed(2)}</td>
                             <td style="color: ${diff >= 0 ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 600;">${diffSign}$${diff.toFixed(2)}</td>
                             <td>${t.size || 1} Lot</td>
-                            <td style="color: ${gross >= 0 ? 'var(--emerald)' : 'var(--crimson)'};">${formatUsd(gross, true)}</td>
-                            <td style="color: var(--amber); font-weight: 600;">-${formatUsd(fee)}</td>
+                            <td style="color: ${gross >= 0 ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 600;">${formatPnl(gross, true)}</td>
+                            <td style="color: var(--amber); font-weight: 600;">-${formatFee(fee)}</td>
                             <td style="color: ${net >= 0 ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 700;">
-                                ${formatUsd(net, true)} <span style="font-size: 0.75rem; opacity: 0.85;">(${net >= 0 ? '+' : ''}₹${netInr.toFixed(2)})</span>
+                                ${formatPnl(net, true)} <span style="font-size: 0.75rem; opacity: 0.85;">(${formatInr(netInr, true)})</span>
                             </td>
                             <td><span class="badge-pill ${isWin ? 'badge-buy' : 'badge-sell'}">${isWin ? 'WIN 🏆' : 'LOSS 🔻'}</span></td>
                             <td style="color: var(--text-muted); font-size: 0.8rem;">${t.reason || 'Closed'}</td>
@@ -997,8 +1054,8 @@ DASHBOARD_HTML = """
             if (logs.length > 0) {
                 logsTbody.innerHTML = logs.map(l => {
                     const gross = parseFloat(l.gross_pnl || 0);
-                    const fee = parseFloat(l.fee || 0);
-                    const net = parseFloat(l.net_pnl || 0);
+                    const fee = Math.abs(parseFloat(l.fee || 0));
+                    const net = parseFloat(l.net_pnl !== undefined ? l.net_pnl : (gross - fee));
                     const isClosed = l.status === 'CLOSED';
 
                     let actionBadge = '';
@@ -1013,11 +1070,11 @@ DASHBOARD_HTML = """
                             <td>${actionBadge}</td>
                             <td style="font-weight: 600;">$${parseFloat(l.price || 0).toFixed(2)}</td>
                             <td>${l.stop_loss ? '$' + parseFloat(l.stop_loss).toFixed(2) : '--'}</td>
-                            <td style="color: ${gross >= 0 ? 'var(--emerald)' : 'var(--crimson)'};">${isClosed ? formatUsd(gross, true) : '--'}</td>
-                            <td style="color: var(--amber); font-weight: 600;">${isClosed ? '-' + formatUsd(fee) : '--'}</td>
-                            <td style="color: ${net >= 0 ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 700;">${isClosed ? formatUsd(net, true) : '--'}</td>
-                            <td style="color: var(--text-muted); font-size: 0.8rem;">${l.reason}</td>
-                            <td><span class="badge-pill ${isClosed ? (net >= 0 ? 'badge-buy' : 'badge-sell') : 'badge-flat'}">${l.status || 'EXECUTED'}</span></td>
+                            <td style="color: ${gross >= 0 ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 600;">${isClosed ? formatPnl(gross, true) : '--'}</td>
+                            <td style="color: var(--amber); font-weight: 600;">${isClosed ? '-' + formatFee(fee) : (fee > 0 ? '-' + formatFee(fee) : '--')}</td>
+                            <td style="color: ${net >= 0 ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 700;">${isClosed ? formatPnl(net, true) : '--'}</td>
+                            <td style="color: var(--text-muted); font-size: 0.8rem;">${l.reason || '--'}</td>
+                            <td><span class="badge-pill ${isClosed ? (net >= 0 ? 'badge-buy' : 'badge-sell') : (l.status === 'OPEN' ? 'badge-buy' : 'badge-flat')}">${l.status || 'EXECUTED'}</span></td>
                         </tr>
                     `;
                 }).join('');
@@ -1033,7 +1090,10 @@ DASHBOARD_HTML = """
                     const side = (f.side || 'buy').toUpperCase();
                     const price = parseFloat(f.price || 0);
                     const size = parseFloat(f.size || 1);
-                    const fee = parseFloat(f.trading_fee || f.fee || f.commission || f.cashflow || 0) || (price * size * contractVal * 0.0005);
+                    const rawFee = f.trading_fee ?? f.fee ?? f.commission ?? f.cashflow;
+                    const fee = (rawFee !== undefined && rawFee !== null && rawFee !== '')
+                        ? Math.abs(parseFloat(rawFee))
+                        : (price * size * contractVal * 0.0005 || 0.0144);
                     const timeStr = formatTimeIST(f.created_at);
 
                     return `
@@ -1043,7 +1103,7 @@ DASHBOARD_HTML = """
                             <td><span style="color: ${side === 'BUY' ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 700;">${side}</span></td>
                             <td style="font-weight: 600;">$${price.toFixed(2)}</td>
                             <td>${size} Lot</td>
-                            <td style="color: var(--amber); font-weight: 600;">-${formatUsd(fee)}</td>
+                            <td style="color: var(--amber); font-weight: 600;">-${formatFee(fee)}</td>
                             <td><span class="badge-pill badge-flat">${f.role || 'taker'}</span></td>
                         </tr>
                     `;

@@ -38,6 +38,8 @@ firebase.json
 # Testing & logs
 .pytest_cache/
 *.log
+data/
+*.json
 
 # OS generated
 .DS_Store

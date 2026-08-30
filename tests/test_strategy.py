@@ -138,5 +138,48 @@ class TestStrategyEngine(unittest.TestCase):
         self.assertEqual(sig.action, "EXIT_LONG")
         self.assertIn("RealtimeEmergencyStop", sig.reason)
 
+    def test_standalone_performance_stats_calculation(self):
+        import bot.standalone_bot as sb
+        # Mock completed_trades
+        original_trades = sb.completed_trades
+        try:
+            sb.completed_trades = [
+                {
+                    "entry_price": 2880.0,
+                    "exit_price": 2890.0,
+                    "price_diff": 10.0,
+                    "size": 1,
+                    "gross_pnl": 0.10,
+                    "fee": 0.0288,
+                    "net_pnl": 0.0712,
+                    "net_pnl_inr": 6.23,
+                    "is_profit": True,
+                    "reason": "Smart Exit"
+                },
+                {
+                    "entry_price": 2890.0,
+                    "exit_price": 2885.0,
+                    "price_diff": -5.0,
+                    "size": 1,
+                    "gross_pnl": -0.05,
+                    "fee": 0.0288,
+                    "net_pnl": -0.0788,
+                    "net_pnl_inr": -6.90,
+                    "is_profit": False,
+                    "reason": "Trailing Stop"
+                }
+            ]
+            stats = sb.get_performance_stats()
+            self.assertEqual(stats["total_trades"], 2)
+            self.assertEqual(stats["profitable_trades"], 1)
+            self.assertEqual(stats["loss_trades"], 1)
+            self.assertEqual(stats["win_rate"], 50.0)
+            self.assertAlmostEqual(stats["total_fees"], 0.0576, places=4)
+            self.assertAlmostEqual(stats["total_gross_pnl"], 0.05, places=4)
+            self.assertAlmostEqual(stats["total_net_pnl"], -0.0076, places=4)
+            self.assertAlmostEqual(stats["total_net_pnl_inr"], round(-0.0076 * 87.5, 2), places=2)
+        finally:
+            sb.completed_trades = original_trades
+
 if __name__ == "__main__":
     unittest.main()

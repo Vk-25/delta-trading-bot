@@ -12,7 +12,7 @@ from bot.strategy_engine import StrategyEngine, SignalResult
 from bot.utils import logger
 from bot.dashboard import DASHBOARD_HTML
 
-TRADE_FEE_PER_ORDER = 0.0143  # Default baseline USDT fee per order
+TRADE_FEE_PER_ORDER = 0.0144  # Default baseline USDT fee per order ($0.0144 for 1 lot ETH @ 100x taker fee 0.05%)
 TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "trade_history.json")
 
 global_bot_instance: Optional['StandaloneBot'] = None
@@ -62,7 +62,7 @@ def log_trade_entry(action: str, reason: str, entry_price: float, stop_loss: Opt
     global active_trade_tracker
     now_ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
     contract_val = get_current_contract_value()
-    est_fee = round(max(entry_price * size * contract_val * 0.0005, 0.005), 4)
+    est_fee = round(max(entry_price * size * contract_val * 0.0005, 0.0144), 4)
     active_trade_tracker = {
         "action": action,
         "entry_time": now_ist.strftime("%H:%M:%S IST"),
@@ -103,11 +103,11 @@ def log_trade_exit(action: str, reason: str, exit_price: float):
         price_diff = entry_p - exit_price
         
     gross_pnl = price_diff * size * contract_val
-    entry_fee = active_trade_tracker.get("fee") or (entry_p * size * contract_val * 0.0005)
-    exit_fee = exit_price * size * contract_val * 0.0005
-    total_fee = round(max(entry_fee + exit_fee, 0.01), 4)
-    net_pnl = gross_pnl - total_fee
-    net_pnl_inr = net_pnl * 87.5
+    entry_fee = active_trade_tracker.get("fee") or (entry_p * size * contract_val * 0.0005) or 0.0144
+    exit_fee = (exit_price * size * contract_val * 0.0005) or 0.0144
+    total_fee = round(max(entry_fee + exit_fee, 0.0144 * 2), 4)
+    net_pnl = round(gross_pnl - total_fee, 4)
+    net_pnl_inr = round(net_pnl * 87.5, 2)
     is_profit = net_pnl > 0
     
     trade_record = {
@@ -152,12 +152,12 @@ def log_trade_exit(action: str, reason: str, exit_price: float):
 
 def get_performance_stats() -> Dict[str, Any]:
     total = len(completed_trades)
-    profitable = len([t for t in completed_trades if t.get("is_profit")])
-    losses = len([t for t in completed_trades if not t.get("is_profit")])
+    profitable = len([t for t in completed_trades if t.get("is_profit") or (float(t.get("net_pnl", 0)) > 0)])
+    losses = total - profitable
     win_rate = round((profitable / total * 100), 1) if total > 0 else 0.0
-    total_fees = round(total * TRADE_FEE_PER_ORDER, 4)
-    total_gross = round(sum(t.get("gross_pnl", 0.0) for t in completed_trades), 4)
-    total_net = round(sum(t.get("net_pnl", 0.0) for t in completed_trades), 4)
+    total_fees = round(sum(float(t.get("fee", 0.0144 * 2)) for t in completed_trades), 4)
+    total_gross = round(sum(float(t.get("gross_pnl", 0.0)) for t in completed_trades), 4)
+    total_net = round(sum(float(t.get("net_pnl", 0.0)) for t in completed_trades), 4)
     total_net_inr = round(total_net * 87.5, 2)
     
     return {

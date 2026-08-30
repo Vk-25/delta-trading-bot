@@ -35,6 +35,7 @@ import os
 import json
 
 TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "trade_history.json")
+webhook_active_tracker: Dict[str, Any] = {}
 
 def load_webhook_trades() -> List[Dict[str, Any]]:
     try:
@@ -47,14 +48,22 @@ def load_webhook_trades() -> List[Dict[str, Any]]:
         pass
     return []
 
+def save_webhook_trades(trades: List[Dict[str, Any]]):
+    try:
+        os.makedirs(os.path.dirname(TRADE_HISTORY_FILE), exist_ok=True)
+        with open(TRADE_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(trades[:300], f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save trade history: {e}")
+
 def get_webhook_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
     total = len(trades)
-    profitable = len([t for t in trades if t.get("is_profit")])
-    losses = len([t for t in trades if not t.get("is_profit")])
+    profitable = len([t for t in trades if t.get("is_profit") or (float(t.get("net_pnl", 0)) > 0)])
+    losses = total - profitable
     win_rate = round((profitable / total * 100), 1) if total > 0 else 0.0
-    total_fees = round(sum(t.get("fee", 0.0143) for t in trades), 4)
-    total_gross = round(sum(t.get("gross_pnl", 0.0) for t in trades), 4)
-    total_net = round(sum(t.get("net_pnl", 0.0) for t in trades), 4)
+    total_fees = round(sum(float(t.get("fee", 0.0144 * 2)) for t in trades), 4)
+    total_gross = round(sum(float(t.get("gross_pnl", 0.0)) for t in trades), 4)
+    total_net = round(sum(float(t.get("net_pnl", 0.0)) for t in trades), 4)
     total_net_inr = round(total_net * 87.5, 2)
     return {
         "total_trades": total,
@@ -67,24 +76,35 @@ def get_webhook_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
         "total_net_pnl_inr": total_net_inr
     }
 
-def log_trade_event(action: str, reason: str, price: float, stop_loss: Optional[float] = None):
+def log_trade_event(action: str, reason: str, price: float, stop_loss: Optional[float] = None, gross_pnl: float = 0.0, fee: float = 0.0, net_pnl: float = 0.0, status: str = "INFO"):
     now_ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
     event = {
         "time": now_ist.strftime("%H:%M:%S IST"),
         "action": action,
         "reason": reason,
         "price": price,
-        "stop_loss": stop_loss
+        "stop_loss": stop_loss,
+        "gross_pnl": gross_pnl,
+        "fee": fee,
+        "net_pnl": net_pnl,
+        "net_pnl_inr": round(net_pnl * 87.5, 2),
+        "status": status
     }
     recent_trade_logs.insert(0, event)
     if len(recent_trade_logs) > 50:
         recent_trade_logs.pop()
 
 def process_trade_action(payload: WebhookPayload) -> dict:
+    global webhook_active_tracker
     symbol = (payload.symbol or config.TRADING_SYMBOL).strip().upper()
     size = payload.size if payload.size is not None and payload.size > 0 else config.ORDER_SIZE
     order_type = (payload.order_type or config.ORDER_TYPE).lower()
     action = payload.action.upper()
+    now_ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
+    try:
+        contract_val = float(delta_client.get_contract_value(symbol))
+    except Exception:
+        contract_val = 0.001 if "BTC" in symbol else (1.0 if "SOL" in symbol else 0.01)
 
     logger.info(f"===> Received TradingView Webhook Action: [{action}] for {symbol} (Size: {size}, Price: {payload.price}, StopLoss: {payload.stop_loss})")
 
@@ -107,12 +127,29 @@ def process_trade_action(payload: WebhookPayload) -> dict:
             side="buy",
             order_type=order_type
         )
+        entry_p = float(
+            res.get("result", {}).get("avg_fill_price") or
+            res.get("result", {}).get("average_fill_price") or
+            res.get("result", {}).get("price") or
+            payload.price or
+            0.0
+        )
+        est_fee = round(max(entry_p * size * contract_val * 0.0005, 0.0144), 4)
+
         if res.get("success") and payload.stop_loss is not None and float(payload.stop_loss) > 0:
             delta_client.cancel_all_orders(symbol)
             delta_client.place_stop_order(symbol, size, "sell", stop_price=float(payload.stop_loss))
             logger.info(f"🛡️ [WEBHOOK STOP PLACED] Stop-Loss placed on Delta at {float(payload.stop_loss):.2f}")
         
-        log_trade_event("BUY", payload.comment or "TradingView Alert", payload.price or 0.0, payload.stop_loss)
+        webhook_active_tracker = {
+            "action": "BUY",
+            "entry_time": now_ist.strftime("%H:%M:%S IST"),
+            "entry_price": entry_p,
+            "stop_loss": payload.stop_loss,
+            "size": size,
+            "fee": est_fee
+        }
+        log_trade_event("BUY", payload.comment or "TradingView Alert", entry_p, payload.stop_loss, gross_pnl=0.0, fee=est_fee, net_pnl=-est_fee, status="OPEN")
         return {"action": "BUY", "result": res}
 
     elif action == "SELL":
@@ -130,42 +167,75 @@ def process_trade_action(payload: WebhookPayload) -> dict:
             side="sell",
             order_type=order_type
         )
+        entry_p = float(
+            res.get("result", {}).get("avg_fill_price") or
+            res.get("result", {}).get("average_fill_price") or
+            res.get("result", {}).get("price") or
+            payload.price or
+            0.0
+        )
+        est_fee = round(max(entry_p * size * contract_val * 0.0005, 0.0144), 4)
+
         if res.get("success") and payload.stop_loss is not None and float(payload.stop_loss) > 0:
             delta_client.cancel_all_orders(symbol)
             delta_client.place_stop_order(symbol, size, "buy", stop_price=float(payload.stop_loss))
             logger.info(f"🛡️ [WEBHOOK STOP PLACED] Stop-Loss placed on Delta at {float(payload.stop_loss):.2f}")
         
-        log_trade_event("SELL", payload.comment or "TradingView Alert", payload.price or 0.0, payload.stop_loss)
+        webhook_active_tracker = {
+            "action": "SELL",
+            "entry_time": now_ist.strftime("%H:%M:%S IST"),
+            "entry_price": entry_p,
+            "stop_loss": payload.stop_loss,
+            "size": size,
+            "fee": est_fee
+        }
+        log_trade_event("SELL", payload.comment or "TradingView Alert", entry_p, payload.stop_loss, gross_pnl=0.0, fee=est_fee, net_pnl=-est_fee, status="OPEN")
         return {"action": "SELL", "result": res}
 
-    elif action == "EXIT_LONG":
-        if existing_size > 0:
-            logger.info(f"Executing EXIT_LONG: closing LONG position ({existing_size})...")
-            res = delta_client.close_position(symbol)
-            delta_client.cancel_all_orders(symbol)
-            log_trade_event("EXIT_LONG", payload.comment or "Signal Exit", payload.price or 0.0)
-            return {"action": "EXIT_LONG", "result": res}
-        else:
-            logger.info("EXIT_LONG received, but no open LONG position found.")
-            return {"action": "EXIT_LONG", "message": "No open LONG position"}
+    elif action in ("EXIT_LONG", "EXIT_SHORT", "CLOSE"):
+        exit_p = float(payload.price or 0.0)
+        entry_p = webhook_active_tracker.get("entry_price") or float(existing_pos.get("entry_price", 0.0) if existing_pos else 0.0) or exit_p
+        side = webhook_active_tracker.get("action") or ("BUY" if (action == "EXIT_LONG" or existing_size > 0) else "SELL")
+        trade_size = webhook_active_tracker.get("size") or abs(existing_size) or size
 
-    elif action == "EXIT_SHORT":
-        if existing_size < 0:
-            logger.info(f"Executing EXIT_SHORT: closing SHORT position ({existing_size})...")
-            res = delta_client.close_position(symbol)
-            delta_client.cancel_all_orders(symbol)
-            log_trade_event("EXIT_SHORT", payload.comment or "Signal Exit", payload.price or 0.0)
-            return {"action": "EXIT_SHORT", "result": res}
+        if "LONG" in action or side == "BUY":
+            price_diff = exit_p - entry_p if (exit_p > 0 and entry_p > 0) else 0.0
         else:
-            logger.info("EXIT_SHORT received, but no open SHORT position found.")
-            return {"action": "EXIT_SHORT", "message": "No open SHORT position"}
+            price_diff = entry_p - exit_p if (exit_p > 0 and entry_p > 0) else 0.0
 
-    elif action == "CLOSE":
-        logger.info(f"Executing CLOSE: flattening any open position for {symbol}...")
+        gross_pnl = price_diff * trade_size * contract_val
+        entry_fee = webhook_active_tracker.get("fee") or (entry_p * trade_size * contract_val * 0.0005) or 0.0144
+        exit_fee = (exit_p * trade_size * contract_val * 0.0005) or 0.0144
+        total_fee = round(max(entry_fee + exit_fee, 0.0144 * 2), 4)
+        net_pnl = round(gross_pnl - total_fee, 4)
+        net_pnl_inr = round(net_pnl * 87.5, 2)
+        is_profit = net_pnl > 0
+
         res = delta_client.close_position(symbol)
         delta_client.cancel_all_orders(symbol)
-        log_trade_event("CLOSE", "Manual Emergency Close", payload.price or 0.0)
-        return {"action": "CLOSE", "result": res}
+
+        if entry_p > 0 and exit_p > 0:
+            trades = load_webhook_trades()
+            trades.insert(0, {
+                "entry_time": webhook_active_tracker.get("entry_time", now_ist.strftime("%H:%M:%S IST")),
+                "exit_time": now_ist.strftime("%H:%M:%S IST"),
+                "side": side,
+                "entry_price": entry_p,
+                "exit_price": exit_p,
+                "price_diff": round(price_diff, 2),
+                "size": trade_size,
+                "gross_pnl": round(gross_pnl, 4),
+                "fee": total_fee,
+                "net_pnl": net_pnl,
+                "net_pnl_inr": net_pnl_inr,
+                "is_profit": is_profit,
+                "reason": payload.comment or f"Signal {action}"
+            })
+            save_webhook_trades(trades)
+
+        log_trade_event(action, payload.comment or "Signal Exit", exit_p, None, gross_pnl=round(gross_pnl, 4), fee=total_fee, net_pnl=net_pnl, status="CLOSED")
+        webhook_active_tracker = {}
+        return {"action": action, "result": res}
 
     else:
         raise ValueError(f"Unknown action: {action}")
