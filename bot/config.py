@@ -39,21 +39,21 @@ class BotConfig:
     ENABLE_LIVE_ENTRIES: bool = os.getenv("ENABLE_LIVE_ENTRIES", "true").lower() in ("true", "1", "yes")
     ENABLE_TREND_CONTINUATION: bool = os.getenv("ENABLE_TREND_CONTINUATION", "false").lower() in ("true", "1", "yes")
     
-    # 100x Capital Protection & Zero-Loss Auto-Breakeven (9% ROI Initial Lock)
+    # Capital Protection & Zero-Loss Auto-Breakeven
     ENABLE_BREAKEVEN: bool = os.getenv("ENABLE_BREAKEVEN", "true").lower() in ("true", "1", "yes")
-    BREAKEVEN_ATR: float = float(os.getenv("BREAKEVEN_ATR", "0.24"))
-    FEE_BUFFER_USD: float = float(os.getenv("FEE_BUFFER_USD", "0.5"))
+    BREAKEVEN_ATR: float = float(os.getenv("BREAKEVEN_ATR", "0.85"))
+    FEE_BUFFER_USD: float = float(os.getenv("FEE_BUFFER_USD", "1.5"))
     
-    # 100x Profit Protection & Real-time Trailing Stop
+    # Profit Protection & Real-time Trailing Stop
     ENABLE_PROTECTION: bool = os.getenv("ENABLE_PROTECTION", "true").lower() in ("true", "1", "yes")
     ENABLE_INTRA_CANDLE_EXIT: bool = os.getenv("ENABLE_INTRA_CANDLE_EXIT", "true").lower() in ("true", "1", "yes")
-    ACTIVATION_ATR: float = float(os.getenv("ACTIVATION_ATR", "0.50"))
-    TRAIL_ATR: float = float(os.getenv("TRAIL_ATR", "0.35"))
+    ACTIVATION_ATR: float = float(os.getenv("ACTIVATION_ATR", "1.0"))
+    TRAIL_ATR: float = float(os.getenv("TRAIL_ATR", "0.85"))
     TAKE_PROFIT_ATR: float = float(os.getenv("TAKE_PROFIT_ATR", "0.0"))
     
-    # 100x Emergency Stop (Strictly placed at 0.45 ATR, $10 before the 0.75% liquidation threshold)
+    # Emergency Stop
     ENABLE_EMERGENCY: bool = os.getenv("ENABLE_EMERGENCY", "true").lower() in ("true", "1", "yes")
-    EMERGENCY_ATR: float = float(os.getenv("EMERGENCY_ATR", "0.45"))
+    EMERGENCY_ATR: float = float(os.getenv("EMERGENCY_ATR", "1.50"))
     
     # Standalone Bot Polling (15m Primary Timeframe)
     TIMEFRAME: str = os.getenv("TIMEFRAME", "15m")

@@ -12,23 +12,64 @@ from bot.strategy_engine import StrategyEngine, SignalResult
 from bot.utils import logger
 from bot.dashboard import DASHBOARD_HTML
 
-TRADE_FEE_PER_ORDER = 0.0143  # USDT fee per trade
+TRADE_FEE_PER_ORDER = 0.0143  # Default baseline USDT fee per order
+TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "trade_history.json")
 
 global_bot_instance: Optional['StandaloneBot'] = None
 recent_standalone_logs: List[Dict[str, Any]] = []
 completed_trades: List[Dict[str, Any]] = []
 active_trade_tracker: Dict[str, Any] = {}
 
+def load_trade_history():
+    """Loads historical completed trades from local persistent storage."""
+    global completed_trades
+    try:
+        if os.path.exists(TRADE_HISTORY_FILE):
+            with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    completed_trades = data
+                    logger.info(f"Loaded {len(completed_trades)} historical trades from {TRADE_HISTORY_FILE}")
+    except Exception as e:
+        logger.warning(f"Failed to load trade history from {TRADE_HISTORY_FILE}: {e}")
+
+def save_trade_history():
+    """Saves historical completed trades to local persistent storage."""
+    try:
+        os.makedirs(os.path.dirname(TRADE_HISTORY_FILE), exist_ok=True)
+        with open(TRADE_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(completed_trades[:300], f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save trade history to {TRADE_HISTORY_FILE}: {e}")
+
+# Load trade history at startup
+load_trade_history()
+
+def get_current_contract_value() -> float:
+    """Helper to get the contract value multiplier (0.01 for ETH, 0.001 for BTC, 1.0 for SOL)."""
+    if global_bot_instance and hasattr(global_bot_instance, "client"):
+        return global_bot_instance.client.get_contract_value(config.TRADING_SYMBOL)
+    sym = config.TRADING_SYMBOL.strip().upper()
+    if "ETH" in sym:
+        return 0.01
+    elif "BTC" in sym:
+        return 0.001
+    elif "SOL" in sym:
+        return 1.0
+    return 0.01
+
 def log_trade_entry(action: str, reason: str, entry_price: float, stop_loss: Optional[float] = None, size: int = 1):
     global active_trade_tracker
     now_ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
+    contract_val = get_current_contract_value()
+    est_fee = round(max(entry_price * size * contract_val * 0.0005, 0.005), 4)
     active_trade_tracker = {
         "action": action,
         "entry_time": now_ist.strftime("%H:%M:%S IST"),
         "entry_price": entry_price,
         "stop_loss": stop_loss,
         "size": size,
-        "fee": TRADE_FEE_PER_ORDER
+        "fee": est_fee
     }
     event = {
         "time": now_ist.strftime("%H:%M:%S IST"),
@@ -37,9 +78,9 @@ def log_trade_entry(action: str, reason: str, entry_price: float, stop_loss: Opt
         "price": entry_price,
         "stop_loss": stop_loss,
         "gross_pnl": 0.0,
-        "fee": TRADE_FEE_PER_ORDER,
-        "net_pnl": -TRADE_FEE_PER_ORDER,
-        "net_pnl_inr": round(-TRADE_FEE_PER_ORDER * 87.5, 2),
+        "fee": est_fee,
+        "net_pnl": -est_fee,
+        "net_pnl_inr": round(-est_fee * 87.5, 2),
         "status": "OPEN"
     }
     recent_standalone_logs.insert(0, event)
@@ -53,15 +94,18 @@ def log_trade_exit(action: str, reason: str, exit_price: float):
     entry_p = active_trade_tracker.get("entry_price") or exit_price
     side = active_trade_tracker.get("action") or ("BUY" if "LONG" in action else "SELL")
     size = active_trade_tracker.get("size") or config.ORDER_SIZE
+    contract_val = get_current_contract_value()
     
-    # Delta ETHUSD Inverse / Point Value: 1 contract = 0.001 ETH
+    # Delta Contract Multiplier: 1 contract = contract_val (e.g. 0.01 for ETHUSD, 0.001 for BTCUSD)
     if "LONG" in action or side == "BUY":
         price_diff = exit_price - entry_p
     else:
         price_diff = entry_p - exit_price
         
-    gross_pnl = price_diff * size * 0.001
-    total_fee = TRADE_FEE_PER_ORDER
+    gross_pnl = price_diff * size * contract_val
+    entry_fee = active_trade_tracker.get("fee") or (entry_p * size * contract_val * 0.0005)
+    exit_fee = exit_price * size * contract_val * 0.0005
+    total_fee = round(max(entry_fee + exit_fee, 0.01), 4)
     net_pnl = gross_pnl - total_fee
     net_pnl_inr = net_pnl * 87.5
     is_profit = net_pnl > 0
@@ -82,8 +126,9 @@ def log_trade_exit(action: str, reason: str, exit_price: float):
         "reason": reason
     }
     completed_trades.insert(0, trade_record)
-    if len(completed_trades) > 100:
+    if len(completed_trades) > 300:
         completed_trades.pop()
+    save_trade_history()
         
     event = {
         "time": now_ist.strftime("%H:%M:%S IST"),
@@ -103,6 +148,7 @@ def log_trade_exit(action: str, reason: str, exit_price: float):
         recent_standalone_logs.pop()
         
     active_trade_tracker = {}
+
 
 def get_performance_stats() -> Dict[str, Any]:
     total = len(completed_trades)
@@ -220,8 +266,13 @@ class RenderHealthHandler(BaseHTTPRequestHandler):
                             active_sl = float(o.get("stop_price"))
                             break
 
+                # 5. Delta Exchange Real Fills
+                fills_res = bot.client.get_fills(bot.symbol, limit=20)
+                exchange_fills = fills_res.get("result", []) if (fills_res.get("success") and isinstance(fills_res.get("result"), list)) else []
+
                 payload = {
                     "symbol": bot.symbol,
+                    "contract_value": bot.client.get_contract_value(bot.symbol),
                     "timeframe": bot.timeframe,
                     "leverage": config.LEVERAGE,
                     "balances": {
@@ -235,6 +286,7 @@ class RenderHealthHandler(BaseHTTPRequestHandler):
                     "market": market_info,
                     "stats": get_performance_stats(),
                     "completed_trades": completed_trades,
+                    "exchange_fills": exchange_fills,
                     "recent_logs": recent_standalone_logs
                 }
                 self.wfile.write(json.dumps(payload).encode("utf-8"))

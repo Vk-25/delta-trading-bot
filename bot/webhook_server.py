@@ -31,6 +31,42 @@ class WebhookPayload(BaseModel):
     stop_loss: Optional[float] = Field(None, description="Stop Loss price (e.g. EMA cut candle low/high)")
     comment: Optional[str] = Field(None, description="Optional note or strategy comment")
 
+import os
+import json
+
+TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "trade_history.json")
+
+def load_webhook_trades() -> List[Dict[str, Any]]:
+    try:
+        if os.path.exists(TRADE_HISTORY_FILE):
+            with open(TRADE_HISTORY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+    except Exception:
+        pass
+    return []
+
+def get_webhook_stats(trades: List[Dict[str, Any]]) -> Dict[str, Any]:
+    total = len(trades)
+    profitable = len([t for t in trades if t.get("is_profit")])
+    losses = len([t for t in trades if not t.get("is_profit")])
+    win_rate = round((profitable / total * 100), 1) if total > 0 else 0.0
+    total_fees = round(sum(t.get("fee", 0.0143) for t in trades), 4)
+    total_gross = round(sum(t.get("gross_pnl", 0.0) for t in trades), 4)
+    total_net = round(sum(t.get("net_pnl", 0.0) for t in trades), 4)
+    total_net_inr = round(total_net * 87.5, 2)
+    return {
+        "total_trades": total,
+        "profitable_trades": profitable,
+        "loss_trades": losses,
+        "win_rate": win_rate,
+        "total_fees": total_fees,
+        "total_gross_pnl": total_gross,
+        "total_net_pnl": total_net,
+        "total_net_pnl_inr": total_net_inr
+    }
+
 def log_trade_event(action: str, reason: str, price: float, stop_loss: Optional[float] = None):
     now_ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
     event = {
@@ -207,8 +243,14 @@ def get_dashboard_data():
             active_sl = float(o.get("stop_price"))
             break
 
+    completed = load_webhook_trades()
+    stats = get_webhook_stats(completed)
+    fills_res = delta_client.get_fills(symbol, limit=20)
+    exchange_fills = fills_res.get("result", []) if (fills_res.get("success") and isinstance(fills_res.get("result"), list)) else []
+
     return {
         "symbol": symbol,
+        "contract_value": delta_client.get_contract_value(symbol),
         "timeframe": config.TIMEFRAME,
         "leverage": config.LEVERAGE,
         "balances": {
@@ -223,6 +265,9 @@ def get_dashboard_data():
             (float(pos.get("size", 0)) < 0 and active_sl <= float(pos.get("entry_price", 0)))
         ),
         "market": market_info,
+        "stats": stats,
+        "completed_trades": completed,
+        "exchange_fills": exchange_fills,
         "recent_logs": recent_trade_logs
     }
 

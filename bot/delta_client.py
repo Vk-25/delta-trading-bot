@@ -182,6 +182,26 @@ class DeltaExchangeClient:
             return prod.get("id")
         return None
 
+    def get_contract_value(self, symbol: str) -> float:
+        """Resolves symbol to its contract value multiplier (e.g. 0.01 for ETHUSD, 0.001 for BTCUSD)."""
+        prod = self.get_product(symbol)
+        if prod and "contract_value" in prod:
+            try:
+                val = float(prod.get("contract_value", 0))
+                if val > 0:
+                    return val
+            except (ValueError, TypeError):
+                pass
+        sym = symbol.strip().upper()
+        if "ETH" in sym:
+            return 0.01
+        elif "BTC" in sym:
+            return 0.001
+        elif "SOL" in sym:
+            return 1.0
+        return 0.01
+
+
     # =========================================================================
     # LEVERAGE & POSITIONS
     # =========================================================================
@@ -368,6 +388,25 @@ class DeltaExchangeClient:
             return {"success": False, "error": f"Symbol not found: {symbol}"}
 
         return self._request("GET", "/v2/orders", params={"product_id": product_id, "state": "open"})
+
+    def get_fills(self, symbol: Optional[str] = None, limit: int = 50) -> Dict[str, Any]:
+        """Fetches historical trade fills from Delta Exchange."""
+        params: Dict[str, Any] = {"limit": str(limit)}
+        if symbol:
+            product_id = self.get_product_id(symbol)
+            if product_id:
+                params["product_id"] = str(product_id)
+        return self._request("GET", "/v2/fills", params=params)
+
+    def get_orders_history(self, symbol: Optional[str] = None, limit: int = 50) -> Dict[str, Any]:
+        """Fetches closed and filled order history from Delta Exchange."""
+        params: Dict[str, Any] = {"limit": str(limit), "state": "closed"}
+        if symbol:
+            product_id = self.get_product_id(symbol)
+            if product_id:
+                params["product_id"] = str(product_id)
+        return self._request("GET", "/v2/orders/history", params=params)
+
 
     # =========================================================================
     # CANDLES & MARKET DATA (FOR STANDALONE BOT)

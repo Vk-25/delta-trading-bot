@@ -367,6 +367,50 @@ DASHBOARD_HTML = """
         .btn-danger:hover {
             background: rgba(244, 63, 94, 0.25);
         }
+
+        /* TABS */
+        .tab-nav {
+            display: flex;
+            gap: 0.5rem;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .tab-btn {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-muted);
+            padding: 0.5rem 1rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .tab-btn:hover {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .tab-btn.active {
+            color: var(--cyan);
+            background: rgba(6, 182, 212, 0.12);
+            border-color: rgba(6, 182, 212, 0.3);
+        }
+
+        .tab-pane {
+            display: none;
+        }
+
+        .tab-pane.active {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -564,33 +608,110 @@ DASHBOARD_HTML = """
             </div>
         </div>
 
-        <!-- RECENT ACTIVITY LOGS & SIGNAL FEED -->
+        <!-- TRADE HISTORY & LOGS TABBED SECTION -->
         <div class="card">
-            <div class="section-header">
-                <span>📜 Live Execution & Signal Feed (With PnL & Fees)</span>
-                <span class="mono" style="font-size: 0.75rem; color: var(--emerald);">Auto-updates every 2s</span>
+            <div class="tab-nav">
+                <button class="tab-btn active" id="btn-tab-trades" onclick="switchTab('trades')">
+                    <span>🏆 Past Completed Trades</span>
+                    <span id="completed-count-badge" class="badge-pill badge-buy mono" style="font-size: 0.65rem;">0</span>
+                </button>
+                <button class="tab-btn" id="btn-tab-logs" onclick="switchTab('logs')">
+                    <span>📜 Live Signals & Activity</span>
+                    <span id="logs-count-badge" class="badge-pill badge-flat mono" style="font-size: 0.65rem;">0</span>
+                </button>
+                <button class="tab-btn" id="btn-tab-fills" onclick="switchTab('fills')">
+                    <span>🏦 Delta Exchange Fills</span>
+                    <span id="fills-count-badge" class="badge-pill badge-fee mono" style="font-size: 0.65rem;">0</span>
+                </button>
             </div>
 
-            <div class="table-wrap">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Time (IST)</th>
-                            <th>Action</th>
-                            <th>Execution Price</th>
-                            <th>Gross PnL</th>
-                            <th>Fee (USDT)</th>
-                            <th>Net PnL (USD / INR)</th>
-                            <th>Trigger Reason</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody id="logs-table-body" class="mono">
-                        <tr>
-                            <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 2rem;">Awaiting trade events...</td>
-                        </tr>
-                    </tbody>
-                </table>
+            <!-- TAB 1: COMPLETED TRADES HISTORY -->
+            <div id="tab-trades" class="tab-pane active">
+                <div class="section-header">
+                    <span>📖 Realized PnL & Completed Trades History</span>
+                    <span class="mono" style="font-size: 0.75rem; color: var(--text-muted);">Auto-saved to persistent history</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Entry & Exit Time (IST)</th>
+                                <th>Side</th>
+                                <th>Entry → Exit Price</th>
+                                <th>Move (Pts)</th>
+                                <th>Lots</th>
+                                <th>Gross PnL</th>
+                                <th>Fee Paid</th>
+                                <th>Net Realized PnL</th>
+                                <th>Outcome</th>
+                                <th>Exit Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody id="completed-trades-body" class="mono">
+                            <tr>
+                                <td colspan="10" style="text-align: center; color: var(--text-muted); padding: 2.5rem;">No completed trades recorded yet</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- TAB 2: LIVE SIGNAL FEED -->
+            <div id="tab-logs" class="tab-pane">
+                <div class="section-header">
+                    <span>⚡ Live Execution & Signal Event Stream</span>
+                    <span class="mono" style="font-size: 0.75rem; color: var(--emerald);">Auto-updates every 2s</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time (IST)</th>
+                                <th>Action</th>
+                                <th>Price</th>
+                                <th>Stop Loss</th>
+                                <th>Gross</th>
+                                <th>Fee</th>
+                                <th>Net</th>
+                                <th>Trigger Reason</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logs-table-body" class="mono">
+                            <tr>
+                                <td colspan="9" style="text-align: center; color: var(--text-muted); padding: 2.5rem;">Awaiting trade events...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- TAB 3: DELTA EXCHANGE FILLS -->
+            <div id="tab-fills" class="tab-pane">
+                <div class="section-header">
+                    <span>🏦 Real Fills from Delta Exchange API</span>
+                    <span class="mono" style="font-size: 0.75rem; color: var(--text-muted);">Direct Exchange Ledger</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fill Time (UTC/IST)</th>
+                                <th>Symbol</th>
+                                <th>Side</th>
+                                <th>Fill Price</th>
+                                <th>Size (Lots)</th>
+                                <th>Fee (USDT)</th>
+                                <th>Role</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fills-table-body" class="mono">
+                            <tr>
+                                <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 2.5rem;">No exchange fill records returned</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
@@ -606,6 +727,16 @@ DASHBOARD_HTML = """
         setInterval(updateClock, 1000);
         updateClock();
 
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+
+            const btn = document.getElementById(`btn-tab-${tabId}`);
+            const pane = document.getElementById(`tab-${tabId}`);
+            if (btn) btn.classList.add('active');
+            if (pane) pane.classList.add('active');
+        }
+
         async function fetchDashboardData() {
             try {
                 const res = await fetch('/api/dashboard');
@@ -619,6 +750,16 @@ DASHBOARD_HTML = """
             }
         }
 
+        function formatUsd(val, showSign = false) {
+            const num = parseFloat(val) || 0;
+            const sign = showSign ? (num > 0 ? '+' : (num < 0 ? '-' : '')) : (num < 0 ? '-' : '');
+            const abs = Math.abs(num);
+            if (abs >= 0.01 || abs === 0) {
+                return `${sign}$${abs.toFixed(2)}`;
+            }
+            return `${sign}$${abs.toFixed(4)}`;
+        }
+
         function renderData(data) {
             document.getElementById('connection-status').innerText = "Delta India Connected";
             document.getElementById('connection-status').style.color = "var(--emerald)";
@@ -629,12 +770,14 @@ DASHBOARD_HTML = """
             document.getElementById('available-balance').innerText = `$${availUsd.toFixed(2)}`;
             document.getElementById('inr-balance').innerText = `≈ ₹${availInr.toLocaleString('en-IN', {maximumFractionDigits: 2})} INR (Available)`;
 
-            // 2. Positions
+            // 2. Positions & Dynamic Multiplier
             const pos = data.position || {};
             const size = parseFloat(pos.size || 0);
             const entryPrice = parseFloat(pos.entry_price || 0);
             const markPrice = data.market?.price || entryPrice;
-            const marginUsed = parseFloat(pos.margin || 0) || (size !== 0 && entryPrice > 0 ? (entryPrice * 0.001 * Math.abs(size)) / 100 : 0);
+            const contractVal = parseFloat(data.contract_value || (data.symbol?.includes('BTC') ? 0.001 : (data.symbol?.includes('SOL') ? 1.0 : 0.01)));
+            const leverage = parseFloat(data.leverage || 100);
+            const marginUsed = parseFloat(pos.margin || 0) || (size !== 0 && entryPrice > 0 ? (entryPrice * contractVal * Math.abs(size)) / leverage : 0);
             const pnlUsd = parseFloat(pos.unrealized_pnl || 0);
             const pnlInr = pnlUsd * USD_TO_INR;
             const roiPct = marginUsed > 0 ? (pnlUsd / marginUsed) * 100 : 0;
@@ -662,7 +805,7 @@ DASHBOARD_HTML = """
             const pnlInrElem = document.getElementById('live-pnl-inr');
             const roiBadge = document.getElementById('roi-badge');
 
-            pnlElem.innerText = `${pnlUsd >= 0 ? '+' : ''}$${pnlUsd.toFixed(3)}`;
+            pnlElem.innerText = formatUsd(pnlUsd, true);
             pnlInrElem.innerText = `≈ ${pnlInr >= 0 ? '+' : ''}₹${pnlInr.toFixed(2)} INR`;
 
             if (pnlUsd > 0) {
@@ -680,9 +823,11 @@ DASHBOARD_HTML = """
             }
 
             // Breakeven target
+            const atrVal = parseFloat(data.market?.atr || 8.0);
+            const beDist = (atrVal * 0.85);
             if (entryPrice > 0) {
-                const beTarget = size > 0 ? entryPrice + 2.43 : entryPrice - 2.43;
-                document.getElementById('be-target').innerText = `$${beTarget.toFixed(2)} (+9% ROI)`;
+                const beTarget = size > 0 ? entryPrice + beDist : entryPrice - beDist;
+                document.getElementById('be-target').innerText = `$${beTarget.toFixed(2)} (+Breakeven)`;
             } else {
                 document.getElementById('be-target').innerText = "--";
             }
@@ -690,7 +835,7 @@ DASHBOARD_HTML = """
             // Active Stop Loss & Trailing Status
             const activeSl = data.active_stop_price || 0;
             document.getElementById('active-stop-loss').innerText = activeSl > 0 ? `$${activeSl.toFixed(2)}` : 'None (Flat)';
-            document.getElementById('trailing-status').innerText = data.breakeven_locked ? '🛡️ Breakeven: LOCKED (+Fee Covered)' : 'Breakeven: Ready at +$2.43';
+            document.getElementById('trailing-status').innerText = data.breakeven_locked ? '🛡️ Breakeven: LOCKED (+Fee Covered)' : `Breakeven: Ready at +$${beDist.toFixed(2)}`;
 
             // 3. Performance Statistics
             const stats = data.stats || {};
@@ -704,7 +849,7 @@ DASHBOARD_HTML = """
             const totalTrades = stats.total_trades || 0;
 
             const netPnlElem = document.getElementById('total-net-pnl');
-            netPnlElem.innerText = `${totalNet >= 0 ? '+' : ''}$${totalNet.toFixed(4)}`;
+            netPnlElem.innerText = formatUsd(totalNet, true);
             netPnlElem.className = totalNet >= 0 ? "card-value mono positive" : "card-value mono negative";
 
             document.getElementById('total-net-pnl-inr').innerText = `≈ ${totalNetInr >= 0 ? '+' : ''}₹${totalNetInr.toFixed(2)} INR Net Profit`;
@@ -715,9 +860,9 @@ DASHBOARD_HTML = """
             winBadge.innerText = `${winRate.toFixed(1)}% Win Rate`;
             winBadge.className = winRate >= 50 ? "badge-pill badge-buy mono" : "badge-pill badge-sell mono";
 
-            document.getElementById('total-fees').innerText = `$${totalFees.toFixed(4)}`;
+            document.getElementById('total-fees').innerText = formatUsd(totalFees);
             document.getElementById('total-fees-inr').innerText = `≈ ₹${(totalFees * USD_TO_INR).toFixed(2)} INR in Fees`;
-            document.getElementById('total-gross-pnl').innerText = `${totalGross >= 0 ? '+' : ''}$${totalGross.toFixed(4)}`;
+            document.getElementById('total-gross-pnl').innerText = formatUsd(totalGross, true);
 
             // 4. Indicators
             document.getElementById('val-ema').innerText = data.market?.ema ? data.market.ema.toFixed(2) : '--';
@@ -744,23 +889,56 @@ DASHBOARD_HTML = """
                 ordersTbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">No active pending orders on Delta book</td></tr>';
             }
 
-            // 6. Signal & Trade Feed Table (With PnL & Fees)
+            // 6. TAB 1: Completed Trades Table
+            const completedTbody = document.getElementById('completed-trades-body');
+            const trades = data.completed_trades || [];
+            document.getElementById('completed-count-badge').innerText = trades.length;
+
+            if (trades.length > 0) {
+                completedTbody.innerHTML = trades.map(t => {
+                    const gross = parseFloat(t.gross_pnl || 0);
+                    const fee = parseFloat(t.fee || 0.0143);
+                    const net = parseFloat(t.net_pnl || 0);
+                    const netInr = parseFloat(t.net_pnl_inr || (net * USD_TO_INR));
+                    const isWin = t.is_profit || net > 0;
+                    const side = (t.side || 'BUY').toUpperCase();
+                    const sideCol = side === 'BUY' ? 'var(--emerald)' : 'var(--crimson)';
+                    const sideLabel = side === 'BUY' ? 'LONG 🟢' : 'SHORT 🔴';
+                    const diff = parseFloat(t.price_diff || 0);
+                    const diffSign = diff > 0 ? '+' : '';
+
+                    return `
+                        <tr>
+                            <td style="color: var(--text-muted); font-size: 0.78rem;">${t.entry_time || '--'} → ${t.exit_time || '--'}</td>
+                            <td><span style="color: ${sideCol}; font-weight: 700;">${sideLabel}</span></td>
+                            <td style="font-weight: 600;">$${parseFloat(t.entry_price || 0).toFixed(2)} → $${parseFloat(t.exit_price || 0).toFixed(2)}</td>
+                            <td style="color: ${diff >= 0 ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 600;">${diffSign}$${diff.toFixed(2)}</td>
+                            <td>${t.size || 1} Lot</td>
+                            <td style="color: ${gross >= 0 ? 'var(--emerald)' : 'var(--crimson)'};">${formatUsd(gross, true)}</td>
+                            <td style="color: var(--amber); font-weight: 600;">-${formatUsd(fee)}</td>
+                            <td style="color: ${net >= 0 ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 700;">
+                                ${formatUsd(net, true)} <span style="font-size: 0.75rem; opacity: 0.85;">(${net >= 0 ? '+' : ''}₹${netInr.toFixed(2)})</span>
+                            </td>
+                            <td><span class="badge-pill ${isWin ? 'badge-buy' : 'badge-sell'}">${isWin ? 'WIN 🏆' : 'LOSS 🔻'}</span></td>
+                            <td style="color: var(--text-muted); font-size: 0.8rem;">${t.reason || 'Closed'}</td>
+                        </tr>
+                    `;
+                }).join('');
+            } else {
+                completedTbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 2.5rem;">No completed trades recorded yet</td></tr>';
+            }
+
+            // 7. TAB 2: Live Activity Logs
             const logsTbody = document.getElementById('logs-table-body');
             const logs = data.recent_logs || [];
+            document.getElementById('logs-count-badge').innerText = logs.length;
+
             if (logs.length > 0) {
                 logsTbody.innerHTML = logs.map(l => {
                     const gross = parseFloat(l.gross_pnl || 0);
                     const fee = parseFloat(l.fee || 0.0143);
                     const net = parseFloat(l.net_pnl || 0);
-                    const netInr = parseFloat(l.net_pnl_inr || (net * USD_TO_INR));
                     const isClosed = l.status === 'CLOSED';
-                    
-                    let pnlDisplay = '--';
-                    if (isClosed) {
-                        const col = net >= 0 ? 'var(--emerald)' : 'var(--crimson)';
-                        const sign = net >= 0 ? '+' : '';
-                        pnlDisplay = `<span style="color: ${col}; font-weight: 700;">${sign}$${net.toFixed(4)} <span style="font-size: 0.75rem; opacity: 0.8;">(${sign}₹${netInr.toFixed(2)})</span></span>`;
-                    }
 
                     let actionBadge = '';
                     if (l.action.includes('BUY')) actionBadge = '<span class="badge-pill badge-buy">BUY 🟢</span>';
@@ -773,11 +951,35 @@ DASHBOARD_HTML = """
                             <td style="color: var(--text-muted);">${l.time}</td>
                             <td>${actionBadge}</td>
                             <td style="font-weight: 600;">$${parseFloat(l.price || 0).toFixed(2)}</td>
-                            <td style="color: ${gross >= 0 ? 'var(--emerald)' : 'var(--crimson)'};">${isClosed ? (gross >= 0 ? '+' : '') + '$' + gross.toFixed(4) : '--'}</td>
-                            <td style="color: var(--amber); font-weight: 600;">-$${fee.toFixed(4)}</td>
-                            <td>${pnlDisplay}</td>
+                            <td>${l.stop_loss ? '$' + parseFloat(l.stop_loss).toFixed(2) : '--'}</td>
+                            <td style="color: ${gross >= 0 ? 'var(--emerald)' : 'var(--crimson)'};">${isClosed ? formatUsd(gross, true) : '--'}</td>
+                            <td style="color: var(--amber); font-weight: 600;">${isClosed ? '-' + formatUsd(fee) : '--'}</td>
+                            <td style="color: ${net >= 0 ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 700;">${isClosed ? formatUsd(net, true) : '--'}</td>
                             <td style="color: var(--text-muted); font-size: 0.8rem;">${l.reason}</td>
                             <td><span class="badge-pill ${isClosed ? (net >= 0 ? 'badge-buy' : 'badge-sell') : 'badge-flat'}">${l.status || 'EXECUTED'}</span></td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            // 8. TAB 3: Delta Exchange Real Fills
+            const fillsTbody = document.getElementById('fills-table-body');
+            const fills = data.exchange_fills || [];
+            document.getElementById('fills-count-badge').innerText = fills.length;
+
+            if (fills.length > 0) {
+                fillsTbody.innerHTML = fills.map(f => {
+                    const side = (f.side || 'buy').toUpperCase();
+                    const fee = parseFloat(f.fee || 0);
+                    return `
+                        <tr>
+                            <td style="color: var(--text-muted);">${f.created_at || '--'}</td>
+                            <td style="font-weight: 600;">${f.symbol || data.symbol}</td>
+                            <td><span style="color: ${side === 'BUY' ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 700;">${side}</span></td>
+                            <td style="font-weight: 600;">$${parseFloat(f.price || 0).toFixed(2)}</td>
+                            <td>${f.size || 1} Lot</td>
+                            <td style="color: var(--amber); font-weight: 600;">-$${fee.toFixed(4)}</td>
+                            <td><span class="badge-pill badge-flat">${f.role || 'taker'}</span></td>
                         </tr>
                     `;
                 }).join('');
