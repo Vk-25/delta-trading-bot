@@ -118,11 +118,18 @@ def get_current_contract_value() -> float:
         return 1.0
     return 0.01
 
+def calculate_order_fee(price: float, size: float, contract_val: float, taker_rate: float = 0.0005) -> float:
+    """Exact Delta Exchange taker fee: Price * Size * Contract_Value * 0.05%."""
+    if price <= 0 or size <= 0 or contract_val <= 0:
+        return 0.0
+    notional = price * size * contract_val
+    return round(notional * taker_rate, 4)
+
 def log_trade_entry(action: str, reason: str, entry_price: float, stop_loss: Optional[float] = None, size: int = 1):
     global active_trade_tracker
     now_ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
     contract_val = get_current_contract_value()
-    est_fee = round(max(entry_price * size * contract_val * 0.0005, 0.0144), 4)
+    est_fee = calculate_order_fee(entry_price, size, contract_val)
     active_trade_tracker = {
         "action": action,
         "entry_time": now_ist.strftime("%H:%M:%S IST"),
@@ -162,10 +169,10 @@ def log_trade_exit(action: str, reason: str, exit_price: float):
     else:
         price_diff = entry_p - exit_price
         
-    gross_pnl = price_diff * size * contract_val
-    entry_fee = active_trade_tracker.get("fee") or (entry_p * size * contract_val * 0.0005) or 0.0144
-    exit_fee = (exit_price * size * contract_val * 0.0005) or 0.0144
-    total_fee = round(max(entry_fee + exit_fee, 0.0144 * 2), 4)
+    gross_pnl = round(price_diff * size * contract_val, 4)
+    entry_fee = active_trade_tracker.get("fee") or calculate_order_fee(entry_p, size, contract_val)
+    exit_fee = calculate_order_fee(exit_price, size, contract_val)
+    total_fee = round(entry_fee + exit_fee, 4)
     net_pnl = round(gross_pnl - total_fee, 4)
     net_pnl_inr = round(net_pnl * 87.5, 2)
     is_profit = net_pnl > 0

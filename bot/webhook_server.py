@@ -96,6 +96,13 @@ def log_trade_event(action: str, reason: str, price: float, stop_loss: Optional[
     if len(recent_trade_logs) > 50:
         recent_trade_logs.pop()
 
+def calculate_order_fee(price: float, size: float, contract_val: float, taker_rate: float = 0.0005) -> float:
+    """Exact Delta Exchange taker fee: Price * Size * Contract_Value * 0.05%."""
+    if price <= 0 or size <= 0 or contract_val <= 0:
+        return 0.0
+    notional = price * size * contract_val
+    return round(notional * taker_rate, 4)
+
 def process_trade_action(payload: WebhookPayload) -> dict:
     global webhook_active_tracker
     symbol = (payload.symbol or config.TRADING_SYMBOL).strip().upper()
@@ -136,7 +143,7 @@ def process_trade_action(payload: WebhookPayload) -> dict:
             payload.price or
             0.0
         )
-        est_fee = round(max(entry_p * size * contract_val * 0.0005, 0.0144), 4)
+        est_fee = calculate_order_fee(entry_p, size, contract_val)
 
         if res.get("success") and payload.stop_loss is not None and float(payload.stop_loss) > 0:
             delta_client.cancel_all_orders(symbol)
@@ -176,7 +183,7 @@ def process_trade_action(payload: WebhookPayload) -> dict:
             payload.price or
             0.0
         )
-        est_fee = round(max(entry_p * size * contract_val * 0.0005, 0.0144), 4)
+        est_fee = calculate_order_fee(entry_p, size, contract_val)
 
         if res.get("success") and payload.stop_loss is not None and float(payload.stop_loss) > 0:
             delta_client.cancel_all_orders(symbol)
@@ -205,10 +212,10 @@ def process_trade_action(payload: WebhookPayload) -> dict:
         else:
             price_diff = entry_p - exit_p if (exit_p > 0 and entry_p > 0) else 0.0
 
-        gross_pnl = price_diff * trade_size * contract_val
-        entry_fee = webhook_active_tracker.get("fee") or (entry_p * trade_size * contract_val * 0.0005) or 0.0144
-        exit_fee = (exit_p * trade_size * contract_val * 0.0005) or 0.0144
-        total_fee = round(max(entry_fee + exit_fee, 0.0144 * 2), 4)
+        gross_pnl = round(price_diff * trade_size * contract_val, 4)
+        entry_fee = webhook_active_tracker.get("fee") or calculate_order_fee(entry_p, trade_size, contract_val)
+        exit_fee = calculate_order_fee(exit_p, trade_size, contract_val)
+        total_fee = round(entry_fee + exit_fee, 4)
         net_pnl = round(gross_pnl - total_fee, 4)
         net_pnl_inr = round(net_pnl * 87.5, 2)
         is_profit = net_pnl > 0

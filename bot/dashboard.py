@@ -504,7 +504,7 @@ DASHBOARD_HTML = """
             <div class="card" style="border-left: 3px solid var(--amber);">
                 <div class="card-label">
                     <span>Total Fees Paid</span>
-                    <span class="badge-pill badge-fee mono">$0.0144 / order ($0.0288 RT)</span>
+                    <span class="badge-pill badge-fee mono">0.05% Taker (Exact Notional)</span>
                 </div>
                 <div class="card-value mono" style="color: var(--amber);" id="total-fees">$0.0000</div>
                 <div class="card-sub mono" id="total-fees-inr">≈ ₹0.00 INR in Fees</div>
@@ -823,10 +823,10 @@ DASHBOARD_HTML = """
                 const side = (f.side || 'buy').toUpperCase();
                 const price = parseFloat(f.price || 0);
                 const size = parseFloat(f.size || 1);
-                const rawFee = f.trading_fee ?? f.fee ?? f.commission ?? f.cashflow;
+                const rawFee = f.paid_commission ?? f.fee ?? f.trading_fee ?? f.commission;
                 const fee = (rawFee !== undefined && rawFee !== null && rawFee !== '')
                     ? Math.abs(parseFloat(rawFee))
-                    : (price * size * contractVal * 0.0005 || 0.0144);
+                    : (price * size * contractVal * 0.0005);
                 const time = formatTimeIST(f.created_at);
 
                 if (!active) {
@@ -1122,10 +1122,10 @@ DASHBOARD_HTML = """
                     const side = (f.side || 'buy').toUpperCase();
                     const price = parseFloat(f.price || 0);
                     const size = parseFloat(f.size || 1);
-                    const rawFee = f.trading_fee ?? f.fee ?? f.commission ?? f.cashflow;
+                    const rawFee = f.paid_commission ?? f.fee ?? f.trading_fee ?? f.commission;
                     const fee = (rawFee !== undefined && rawFee !== null && rawFee !== '')
                         ? Math.abs(parseFloat(rawFee))
-                        : (price * size * contractVal * 0.0005 || 0.0144);
+                        : (price * size * contractVal * 0.0005);
                     const timeStr = formatTimeIST(f.created_at);
 
                     return `

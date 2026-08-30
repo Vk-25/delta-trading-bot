@@ -101,7 +101,7 @@ class TestWebhookServer(unittest.TestCase):
     def test_dashboard_contains_updated_fee_and_functions(self):
         res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
-        self.assertIn("$0.0144 / order", res.text)
+        self.assertIn("0.05% Taker", res.text)
         self.assertIn("function formatPnl", res.text)
         self.assertIn("function formatFee", res.text)
         self.assertIn("function formatPrice", res.text)
