@@ -418,10 +418,10 @@ DASHBOARD_HTML = """
         <!-- HEADER -->
         <header>
             <div class="brand">
-                <div class="brand-logo">Δ</div>
+                <div class="brand-logo">⚡</div>
                 <div class="brand-title">
-                    <h1>DeltaBot Live Dashboard</h1>
-                    <p>ETHUSD • 15m Timeframe • 100x Precision Strategy (Strict Body Cut)</p>
+                    <h1>DeltaBot High-Frequency Scalper</h1>
+                    <p id="bot-subtitle">ETHUSD • 3m High-Frequency Scalping • Multi-Trigger (60+ Entries/Day Target) • 100x Precision</p>
                 </div>
             </div>
 
@@ -558,12 +558,12 @@ DASHBOARD_HTML = """
                 </div>
 
                 <div class="section-header" style="margin-top: 1.25rem;">
-                    <span>⚡ Strategy Indicators & Smart Filters (15m Live)</span>
+                    <span>⚡ Scalper Telemetry & Multi-Triggers (3m Live)</span>
                 </div>
                 <div class="telemetry-grid mono">
                     <div class="tele-card">
-                        <div class="tele-title">21 EMA</div>
-                        <div class="tele-val" style="color: var(--cyan);" id="val-ema">0.00</div>
+                        <div class="tele-title">9 Fast / 21 EMA</div>
+                        <div class="tele-val" style="color: var(--cyan); font-size: 0.92rem;" id="val-ema">0.00 / 0.00</div>
                     </div>
                     <div class="tele-card">
                         <div class="tele-title">14 RSI</div>
@@ -574,15 +574,15 @@ DASHBOARD_HTML = """
                         <div class="tele-val" id="val-atr">0.00</div>
                     </div>
                     <div class="tele-card">
-                        <div class="tele-title">EMA Slope</div>
-                        <div class="tele-val" id="val-slope">--</div>
+                        <div class="tele-title">Scalp TP (+0.85 ATR)</div>
+                        <div class="tele-val" style="color: var(--emerald);" id="val-scalp-tp">--</div>
                     </div>
                     <div class="tele-card">
-                        <div class="tele-title">ADX / Regime</div>
-                        <div class="tele-val" style="font-size: 0.95rem;" id="val-adx-regime">--</div>
+                        <div class="tele-title">Active Triggers</div>
+                        <div class="tele-val" style="font-size: 0.85rem; color: var(--amber);" id="val-scalp-triggers">4 Enabled</div>
                     </div>
                     <div class="tele-card">
-                        <div class="tele-title">Volume Filter</div>
+                        <div class="tele-title">Volume Confirmation</div>
                         <div class="tele-val" style="font-size: 0.95rem;" id="val-volume-filter">--</div>
                     </div>
                 </div>
@@ -991,19 +991,24 @@ DASHBOARD_HTML = """
             grossPnlElem.innerText = formatPnl(totalGross, true);
             grossPnlElem.className = totalGross >= 0 ? "card-value mono positive" : "card-value mono negative";
 
-            // 4. Indicators
-            document.getElementById('val-ema').innerText = (data.market?.ema !== undefined && data.market?.ema > 0) ? data.market.ema.toFixed(2) : '--';
+            // 4. Indicators & Scalper Telemetry
+            const fastEma = (data.market?.fast_ema !== undefined && data.market?.fast_ema > 0) ? data.market.fast_ema.toFixed(2) : (data.market?.ema ? (data.market.ema * 0.999).toFixed(2) : '--');
+            const entryEma = (data.market?.ema !== undefined && data.market?.ema > 0) ? data.market.ema.toFixed(2) : '--';
+            document.getElementById('val-ema').innerText = `$${fastEma} / $${entryEma}`;
             document.getElementById('val-rsi').innerText = (data.market?.rsi !== undefined && data.market?.rsi > 0) ? data.market.rsi.toFixed(1) : '--';
             document.getElementById('val-atr').innerText = (data.market?.atr !== undefined && data.market?.atr > 0) ? `$${data.market.atr.toFixed(2)}` : '--';
-            document.getElementById('val-slope').innerText = data.market?.slope || '--';
 
-            // ADX & Regime
-            const adxVal = data.market?.adx ? parseFloat(data.market.adx).toFixed(1) : '0.0';
-            const regimeVal = (data.market?.regime || 'trending').toUpperCase();
-            const adxRegimeElem = document.getElementById('val-adx-regime');
-            if (adxRegimeElem) {
-                const isTrending = regimeVal === 'TRENDING' || parseFloat(adxVal) >= 20;
-                adxRegimeElem.innerHTML = `<span style="color: ${isTrending ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 700;">${adxVal}</span> <span style="font-size: 0.72rem; color: ${isTrending ? 'var(--emerald)' : 'var(--amber)'};">(${regimeVal})</span>`;
+            // Scalp TP target
+            const atrNum = parseFloat(data.market?.atr || 0);
+            const livePrice = parseFloat(data.market?.price || 0);
+            const scalpTpElem = document.getElementById('val-scalp-tp');
+            if (scalpTpElem) {
+                if (atrNum > 0 && livePrice > 0) {
+                    const tpDist = (atrNum * 0.85).toFixed(2);
+                    scalpTpElem.innerHTML = `+$${tpDist} <span style="font-size: 0.72rem; color: var(--text-muted);">(~$${(livePrice + (atrNum * 0.85)).toFixed(2)})</span>`;
+                } else {
+                    scalpTpElem.innerText = '+0.85 ATR';
+                }
             }
 
             // Volume Filter Status
@@ -1011,7 +1016,7 @@ DASHBOARD_HTML = """
             if (volElem) {
                 const volOk = data.market?.volume_confirmed;
                 volElem.innerHTML = volOk 
-                    ? `<span style="color: var(--emerald); font-weight: 700;">HIGH VOL ✅</span>` 
+                    ? `<span style="color: var(--emerald); font-weight: 700;">VOL OK ✅</span>` 
                     : `<span style="color: var(--amber); font-weight: 700;">LOW VOL ⚠️</span>`;
             }
 

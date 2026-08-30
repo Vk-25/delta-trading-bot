@@ -310,6 +310,8 @@ class RenderHealthHandler(BaseHTTPRequestHandler):
                 if df is not None and len(df) > 25:
                     close_s = df["close"]
                     live_p = float(close_s.iloc[-1])
+                    fema_s = close_s.ewm(span=config.FAST_EMA_LENGTH, adjust=False).mean()
+                    live_fema = float(fema_s.iloc[-1])
                     ema_s = close_s.ewm(span=config.ENTRY_EMA_LENGTH, adjust=False).mean()
                     live_ema = float(ema_s.iloc[-1])
                     prev_ema = float(ema_s.iloc[-2])
@@ -324,6 +326,7 @@ class RenderHealthHandler(BaseHTTPRequestHandler):
 
                     market_info = {
                         "price": live_p,
+                        "fast_ema": live_fema,
                         "ema": live_ema,
                         "rsi": float(rsi_s.iloc[-1]) if not rsi_s.empty else 0.0,
                         "atr": float(atr_s.iloc[-1]) if not atr_s.empty else 0.0,

@@ -283,6 +283,8 @@ def get_dashboard_data():
         close_series = pd.Series(df_candles["close"], dtype=float)
         
         live_p = float(close_series.iloc[-1])
+        fast_ema_series = StrategyEngine.calculate_ema(close_series, config.FAST_EMA_LENGTH)
+        live_fema = float(fast_ema_series.iloc[-1])
         ema_series = StrategyEngine.calculate_ema(close_series, config.ENTRY_EMA_LENGTH)
         live_ema = float(ema_series.iloc[-1])
         prev_ema = float(ema_series.iloc[-2]) if len(ema_series) > 1 else live_ema
@@ -302,6 +304,7 @@ def get_dashboard_data():
 
         market_info = {
             "price": live_p,
+            "fast_ema": live_fema,
             "ema": live_ema,
             "rsi": rsi_val,
             "atr": atr_val,
