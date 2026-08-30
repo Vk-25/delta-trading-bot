@@ -40,7 +40,16 @@ class StrategyEngine:
         enable_emergency: bool = True,
         emergency_atr: float = 0.45,
         enable_live_entries: bool = True,
-        enable_trend_continuation: bool = True
+        enable_trend_continuation: bool = True,
+        # ── NEW: Smart Filters for Higher Accuracy ──
+        enable_volume_filter: bool = True,
+        volume_multiplier: float = 1.5,
+        volume_lookback: int = 20,
+        enable_adx_filter: bool = True,
+        adx_length: int = 14,
+        min_adx: float = 20.0,
+        enable_regime_filter: bool = True,
+        enable_mtf_alignment: bool = False,
     ):
         self.entry_ema_length = entry_ema_length
         self.exit_ema_length = exit_ema_length
@@ -60,6 +69,16 @@ class StrategyEngine:
         self.emergency_atr = emergency_atr
         self.enable_live_entries = enable_live_entries
         self.enable_trend_continuation = enable_trend_continuation
+
+        # ── NEW: Smart Filters ──
+        self.enable_volume_filter = enable_volume_filter
+        self.volume_multiplier = volume_multiplier
+        self.volume_lookback = volume_lookback
+        self.enable_adx_filter = enable_adx_filter
+        self.adx_length = adx_length
+        self.min_adx = min_adx
+        self.enable_regime_filter = enable_regime_filter
+        self.enable_mtf_alignment = enable_mtf_alignment
         
         # State variables
         self.position_state: int = 0  # 0 = Flat, 1 = Long, -1 = Short
@@ -291,6 +310,35 @@ class StrategyEngine:
 
             target_state = 1 if action == "BUY" else (-1 if action == "SELL" else self.position_state)
 
+            # ── NEW: Smart Filters for live entries ──
+            if action in ("BUY", "SELL"):
+                # Volume Filter
+                if self.enable_volume_filter:
+                    if not self.has_volume_confirmation(df, self.volume_multiplier, self.volume_lookback):
+                        logger.info(f"[LIVE FILTER] Volume too low → SKIPPING {action}")
+                        action = "NONE"
+                        reason = ""
+                        stop_loss = None
+
+                # ADX Filter
+                if action in ("BUY", "SELL") and self.enable_adx_filter:
+                    adx_series = self.calculate_adx(df, self.adx_length)
+                    curr_adx = float(adx_series.iloc[-1])
+                    if curr_adx < self.min_adx:
+                        logger.info(f"[LIVE FILTER] ADX {curr_adx:.1f} < {self.min_adx} → SKIPPING {action}")
+                        action = "NONE"
+                        reason = ""
+                        stop_loss = None
+
+                # Regime Filter
+                if action in ("BUY", "SELL") and self.enable_regime_filter and len(df) >= 55:
+                    regime = self.detect_regime(df, self.adx_length)
+                    if regime in ('volatile', 'ranging'):
+                        logger.info(f"[LIVE FILTER] Regime: {regime.upper()} → SKIPPING {action}")
+                        action = "NONE"
+                        reason = ""
+                        stop_loss = None
+
         return SignalResult(
             action=action,
             reason=reason,
@@ -367,6 +415,100 @@ class StrategyEngine:
         macd_hist = macd_line - macd_signal
         return macd_line, macd_signal, macd_hist
 
+    # =========================================================================
+    # NEW: ADX, Volume, Regime Detection, Multi-Timeframe Alignment
+    # =========================================================================
+
+    @staticmethod
+    def calculate_adx(df: pd.DataFrame, length: int = 14) -> pd.Series:
+        """
+        Average Directional Index — measures trend STRENGTH (not direction).
+        ADX > 25 = strong trend, ADX < 20 = choppy/ranging market.
+        """
+        high = df['high'].astype(float)
+        low = df['low'].astype(float)
+        close = df['close'].astype(float)
+
+        plus_dm = high.diff()
+        minus_dm = -low.diff()
+
+        # Only keep the larger directional movement
+        plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+        minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+
+        atr = StrategyEngine.calculate_atr(df, length)
+        alpha = 1.0 / length
+
+        plus_di = 100 * (plus_dm.ewm(alpha=alpha, adjust=False).mean() / atr)
+        minus_di = 100 * (minus_dm.ewm(alpha=alpha, adjust=False).mean() / atr)
+
+        di_sum = plus_di + minus_di
+        di_sum = di_sum.replace(0, np.nan)
+        dx = 100 * (plus_di - minus_di).abs() / di_sum
+        adx = dx.ewm(alpha=alpha, adjust=False).mean()
+        return adx.fillna(0)
+
+    @staticmethod
+    def has_volume_confirmation(df: pd.DataFrame, multiplier: float = 1.5, lookback: int = 20) -> bool:
+        """
+        Checks if the current candle's volume exceeds multiplier × average volume.
+        Breakouts on high volume are real; breakouts on low volume are fakeouts.
+        """
+        if 'volume' not in df.columns or len(df) < lookback + 1:
+            return True  # Default to True if volume data unavailable
+        vol = df['volume'].astype(float)
+        avg_vol = vol.iloc[-(lookback + 1):-1].mean()
+        current_vol = float(vol.iloc[-1])
+        if avg_vol <= 0:
+            return True
+        return current_vol > (avg_vol * multiplier)
+
+    @staticmethod
+    def detect_regime(df: pd.DataFrame, adx_length: int = 14, atr_short: int = 14, atr_long: int = 50) -> str:
+        """
+        Detects the current market regime:
+          - 'trending':  ADX > 25 and volatility is normal → use breakout strategy
+          - 'ranging':   ADX < 20 and volatility is low → use mean-reversion or SKIP
+          - 'volatile':  ATR is spiking (> 1.8× long-term) → reduce size or SKIP
+        """
+        if len(df) < max(atr_long + 5, 30):
+            return 'trending'  # Default to trending with insufficient data
+
+        adx_series = StrategyEngine.calculate_adx(df, adx_length)
+        atr_s = StrategyEngine.calculate_atr(df, atr_short)
+        atr_l = StrategyEngine.calculate_atr(df, atr_long)
+
+        adx_val = float(adx_series.iloc[-1])
+        atr_ratio = float(atr_s.iloc[-1]) / float(atr_l.iloc[-1]) if float(atr_l.iloc[-1]) > 0 else 1.0
+
+        if atr_ratio > 1.8:
+            return 'volatile'
+        elif adx_val >= 25:
+            return 'trending'
+        elif adx_val < 20:
+            return 'ranging'
+        else:
+            return 'trending'  # ADX 20-25: borderline, lean toward trend
+
+    @staticmethod
+    def is_higher_tf_aligned(df_higher: pd.DataFrame, direction: str, ema_length: int = 21) -> bool:
+        """
+        Checks if the higher timeframe (e.g. 1H) EMA slope agrees with trade direction.
+        Only take BUY when 1H trend is UP; only take SELL when 1H trend is DOWN.
+        """
+        if df_higher is None or len(df_higher) < ema_length + 5:
+            return True  # Default to True if higher TF data is unavailable
+
+        ema_ht = StrategyEngine.calculate_ema(df_higher['close'].astype(float), ema_length)
+        # Use 3-bar slope for smooth direction detection
+        slope = float(ema_ht.iloc[-1]) - float(ema_ht.iloc[-3])
+
+        if direction == "BUY" and slope > 0:
+            return True
+        elif direction == "SELL" and slope < 0:
+            return True
+        return False
+
     def compute_indicator_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Appends all strategy indicators to a copy of the OHLCV DataFrame.
@@ -385,6 +527,14 @@ class StrategyEngine:
         data['macd_line'] = macd_line
         data['macd_signal'] = macd_signal
         data['macd_hist'] = macd_hist
+
+        # ── NEW: ADX for trend strength filtering ──
+        data['adx'] = self.calculate_adx(data, self.adx_length)
+
+        # ── NEW: Volume average for breakout confirmation ──
+        if 'volume' in data.columns:
+            data['volume'] = data['volume'].astype(float)
+            data['vol_avg'] = data['volume'].rolling(self.volume_lookback, min_periods=1).mean()
         
         return data
 
@@ -439,6 +589,40 @@ class StrategyEngine:
                     raw_buy = True
                 elif clean_break_low:
                     raw_sell = True
+
+            # ── NEW: Smart Filters — reject false breakouts before entry ──
+            if raw_buy or raw_sell:
+                # Volume Filter: breakout candle must have above-average volume
+                if self.enable_volume_filter and 'vol_avg' in data.columns:
+                    curr_vol = float(data['volume'].iloc[i])
+                    avg_vol = float(data['vol_avg'].iloc[i])
+                    if avg_vol > 0 and curr_vol < (avg_vol * self.volume_multiplier):
+                        logger.info(f"[FILTER] Volume {curr_vol:.0f} < {self.volume_multiplier}×avg {avg_vol:.0f} → SKIPPING breakout")
+                        raw_buy = False
+                        raw_sell = False
+
+                # ADX Filter: only trade breakouts in trending markets (ADX > min_adx)
+                if (raw_buy or raw_sell) and self.enable_adx_filter and 'adx' in data.columns:
+                    curr_adx = float(data['adx'].iloc[i])
+                    if curr_adx < self.min_adx:
+                        logger.info(f"[FILTER] ADX {curr_adx:.1f} < {self.min_adx} (choppy market) → SKIPPING breakout")
+                        raw_buy = False
+                        raw_sell = False
+
+                # Regime Filter: skip entries in volatile or ranging markets
+                if (raw_buy or raw_sell) and self.enable_regime_filter:
+                    # Use data up to current bar for regime detection
+                    regime_slice = data.iloc[:i+1]
+                    if len(regime_slice) >= 55:
+                        regime = self.detect_regime(regime_slice, self.adx_length)
+                        if regime == 'volatile':
+                            logger.info(f"[FILTER] Market regime: VOLATILE → SKIPPING breakout")
+                            raw_buy = False
+                            raw_sell = False
+                        elif regime == 'ranging':
+                            logger.info(f"[FILTER] Market regime: RANGING → SKIPPING breakout")
+                            raw_buy = False
+                            raw_sell = False
                     
             exit_long = False
             exit_short = False
@@ -665,6 +849,33 @@ class StrategyEngine:
                 raw_buy = True
             elif clean_break_low:
                 raw_sell = True
+
+        # ── NEW: Smart Filters for get_latest_signal ──
+        if raw_buy or raw_sell:
+            # Volume Filter
+            if self.enable_volume_filter and 'vol_avg' in data.columns:
+                curr_vol = float(data['volume'].iloc[i])
+                avg_vol = float(data['vol_avg'].iloc[i])
+                if avg_vol > 0 and curr_vol < (avg_vol * self.volume_multiplier):
+                    logger.info(f"[FILTER] Volume {curr_vol:.0f} < {self.volume_multiplier}×avg {avg_vol:.0f} → SKIPPING")
+                    raw_buy = False
+                    raw_sell = False
+
+            # ADX Filter
+            if (raw_buy or raw_sell) and self.enable_adx_filter and 'adx' in data.columns:
+                curr_adx = float(data['adx'].iloc[i])
+                if curr_adx < self.min_adx:
+                    logger.info(f"[FILTER] ADX {curr_adx:.1f} < {self.min_adx} → SKIPPING")
+                    raw_buy = False
+                    raw_sell = False
+
+            # Regime Filter
+            if (raw_buy or raw_sell) and self.enable_regime_filter and len(data) >= 55:
+                regime = self.detect_regime(data, self.adx_length)
+                if regime in ('volatile', 'ranging'):
+                    logger.info(f"[FILTER] Regime: {regime.upper()} → SKIPPING")
+                    raw_buy = False
+                    raw_sell = False
 
         action = "NONE"
         reason = ""

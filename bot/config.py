@@ -58,6 +58,22 @@ class BotConfig:
     # Standalone Bot Polling (15m Primary Timeframe)
     TIMEFRAME: str = os.getenv("TIMEFRAME", "15m")
     POLL_INTERVAL_SECONDS: int = int(os.getenv("POLL_INTERVAL_SECONDS", "1"))
+
+    # ── NEW: Smart Entry Filters ──
+    ENABLE_VOLUME_FILTER: bool = os.getenv("ENABLE_VOLUME_FILTER", "true").lower() in ("true", "1", "yes")
+    VOLUME_MULTIPLIER: float = float(os.getenv("VOLUME_MULTIPLIER", "1.5"))
+    VOLUME_LOOKBACK: int = int(os.getenv("VOLUME_LOOKBACK", "20"))
+    ENABLE_ADX_FILTER: bool = os.getenv("ENABLE_ADX_FILTER", "true").lower() in ("true", "1", "yes")
+    ADX_LENGTH: int = int(os.getenv("ADX_LENGTH", "14"))
+    MIN_ADX: float = float(os.getenv("MIN_ADX", "20.0"))
+    ENABLE_REGIME_FILTER: bool = os.getenv("ENABLE_REGIME_FILTER", "true").lower() in ("true", "1", "yes")
+    ENABLE_MTF_ALIGNMENT: bool = os.getenv("ENABLE_MTF_ALIGNMENT", "false").lower() in ("true", "1", "yes")
+    HIGHER_TIMEFRAME: str = os.getenv("HIGHER_TIMEFRAME", "1h")
+
+    # ── NEW: Risk Guard (Daily Drawdown Kill-Switch) ──
+    ENABLE_RISK_GUARD: bool = os.getenv("ENABLE_RISK_GUARD", "true").lower() in ("true", "1", "yes")
+    MAX_DAILY_LOSS_PCT: float = float(os.getenv("MAX_DAILY_LOSS_PCT", "3.0"))
+    MAX_CONSECUTIVE_LOSSES: int = int(os.getenv("MAX_CONSECUTIVE_LOSSES", "4"))
     
     # Optional Proxy (for static IP routing on Render)
     STATIC_PROXY_URL: str = os.getenv("STATIC_PROXY_URL", "").strip()

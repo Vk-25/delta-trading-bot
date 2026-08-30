@@ -16,7 +16,12 @@ class TestStrategyEngine(unittest.TestCase):
             activation_atr=1.0,
             trail_atr=1.25,
             enable_emergency=True,
-            emergency_atr=2.5
+            emergency_atr=2.5,
+            # Disable new smart filters for legacy tests (tested separately)
+            enable_volume_filter=False,
+            enable_adx_filter=False,
+            enable_regime_filter=False,
+            enable_mtf_alignment=False,
         )
 
     def test_indicator_calculations(self):

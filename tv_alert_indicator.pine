@@ -34,6 +34,15 @@ trailATR = input.float(0.85, "Trailing Distance ATR", minval=0.1, step=0.05, gro
 enableEmergency = input.bool(true, "Enable Emergency Loss Exit", group="RISK & ANTI-LIQUIDATION")
 emergencyATR = input.float(1.50, "Emergency Loss ATR", minval=0.1, step=0.05, group="RISK & ANTI-LIQUIDATION")
 
+// ---------------- NEW: SMART ENTRY FILTERS ----------------
+enableVolumeFilter = input.bool(true, "Enable Volume Filter (Reject Low-Volume Breakouts)", group="SMART FILTERS")
+volumeMultiplier = input.float(1.5, "Volume Multiplier (×Avg)", minval=0.5, step=0.1, group="SMART FILTERS")
+volumeLookback = input.int(20, "Volume Lookback Bars", minval=5, group="SMART FILTERS")
+
+enableADXFilter = input.bool(true, "Enable ADX Filter (Skip Choppy Markets)", group="SMART FILTERS")
+adxLength = input.int(14, "ADX Length", minval=5, group="SMART FILTERS")
+minADX = input.float(20.0, "Min ADX for Entry", minval=5.0, step=1.0, group="SMART FILTERS")
+
 // ============================================================================
 // INDICATOR CALCULATIONS
 // ============================================================================
@@ -43,6 +52,25 @@ exitEMA = ta.ema(close, exitEMALength)
 exitRSI = ta.rsi(close, rsiLength)
 exitATR = ta.atr(atrLength)
 [macdLine, macdSignal, macdHist] = ta.macd(close, 12, 26, 9)
+
+// ── NEW: ADX Calculation ──
+dirmov(len) =>
+    upMove = ta.change(high)
+    downMove = -ta.change(low)
+    plusDM = (upMove > downMove and upMove > 0) ? upMove : 0.0
+    minusDM = (downMove > upMove and downMove > 0) ? downMove : 0.0
+    trueRange = ta.rma(ta.tr, len)
+    plusDI = 100 * ta.rma(plusDM, len) / trueRange
+    minusDI = 100 * ta.rma(minusDM, len) / trueRange
+    [plusDI, minusDI]
+
+[plusDI, minusDI] = dirmov(adxLength)
+dx = 100 * math.abs(plusDI - minusDI) / (plusDI + minusDI)
+adxValue = ta.rma(dx, adxLength)
+
+// ── NEW: Volume Average ──
+volAvg = ta.sma(volume, volumeLookback)
+volConfirmed = volume > (volAvg * volumeMultiplier)
 
 plot(entryEMA, title="21 EMA", color=color.rgb(6, 182, 212), linewidth=2)
 
@@ -69,12 +97,22 @@ if emaCuttingCandle
         rawSell := true
 else if enableTrendContinuation
     bool uptrend = close > entryEMA and exitRSI >= 50 and macdLine >= macdSignal
-    bool downtrend = close < entryEMA and exitRSI <= 50 and macdLine <= macdSignal
+    downtrend = close < entryEMA and exitRSI <= 50 and macdLine <= macdSignal
     if uptrend and high > high[1]
         rawBuy := true
     else if downtrend and low < low[1]
         rawSell := true
 
+// ── NEW: Smart Filters — reject false breakouts ──
+// Volume Filter: breakout candle must have above-average volume
+if (rawBuy or rawSell) and enableVolumeFilter and not volConfirmed
+    rawBuy := false
+    rawSell := false
+
+// ADX Filter: only trade in trending markets (ADX > minADX)
+if (rawBuy or rawSell) and enableADXFilter and adxValue < minADX
+    rawBuy := false
+    rawSell := false
 // ============================================================================
 // POSITION STATE MACHINE (MASTER UNIFIED DEFENSE & EXIT)
 // ============================================================================
@@ -220,10 +258,10 @@ plot(positionState != 0 ? entryPrice : na, title="Entry Price", color=color.rgb(
 // HUD INFO TABLE (TOP RIGHT OF CHART)
 // ============================================================================
 
-var table hud = table.new(position.top_right, 2, 6, bgcolor=color.rgb(15, 23, 42, 20), border_color=color.rgb(255, 255, 255, 15), border_width=1)
+var table hud = table.new(position.top_right, 2, 8, bgcolor=color.rgb(15, 23, 42, 20), border_color=color.rgb(255, 255, 255, 15), border_width=1)
 if barstate.islast
     table.cell(hud, 0, 0, "Timeframe", text_color=color.rgb(148, 163, 184), text_size=size.small)
-    table.cell(hud, 1, 0, "15m Master Defense", text_color=color.rgb(6, 182, 212), text_size=size.small)
+    table.cell(hud, 1, 0, "15m Smart Filters", text_color=color.rgb(6, 182, 212), text_size=size.small)
 
     table.cell(hud, 0, 1, "Position", text_color=color.rgb(148, 163, 184), text_size=size.small)
     string posStr = positionState == 1 ? "LONG 🟢" : (positionState == -1 ? "SHORT 🔴" : "FLAT ⚪")
@@ -242,6 +280,17 @@ if barstate.islast
     table.cell(hud, 0, 5, "21 EMA / RSI", text_color=color.rgb(148, 163, 184), text_size=size.small)
     table.cell(hud, 1, 5, "$" + str.tostring(entryEMA, "#.##") + " / " + str.tostring(exitRSI, "#.#"), text_color=color.rgb(6, 182, 212), text_size=size.small)
 
+    // ── NEW: ADX & Volume Filter Status ──
+    string adxStr = str.tostring(adxValue, "#.#")
+    string regimeStr = adxValue >= 25 ? "TRENDING ✅" : (adxValue < 20 ? "CHOPPY ❌" : "NEUTRAL ⚠️")
+    color adxCol = adxValue >= 25 ? color.rgb(16, 185, 129) : (adxValue < 20 ? color.rgb(244, 63, 94) : color.rgb(245, 158, 11))
+    table.cell(hud, 0, 6, "ADX / Regime", text_color=color.rgb(148, 163, 184), text_size=size.small)
+    table.cell(hud, 1, 6, adxStr + " " + regimeStr, text_color=adxCol, text_size=size.small)
+
+    string volStr = volConfirmed ? "HIGH VOL ✅" : "LOW VOL ❌"
+    color volCol = volConfirmed ? color.rgb(16, 185, 129) : color.rgb(244, 63, 94)
+    table.cell(hud, 0, 7, "Volume", text_color=color.rgb(148, 163, 184), text_size=size.small)
+    table.cell(hud, 1, 7, volStr + " (" + str.tostring(volume, "#") + " / " + str.tostring(volAvg, "#") + ")", text_color=volCol, text_size=size.small)
 // ============================================================================
 // WEBHOOK ALERTS (EXCHANGE SYNCHRONIZED)
 // ============================================================================

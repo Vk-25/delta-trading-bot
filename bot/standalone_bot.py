@@ -20,6 +20,66 @@ recent_standalone_logs: List[Dict[str, Any]] = []
 completed_trades: List[Dict[str, Any]] = []
 active_trade_tracker: Dict[str, Any] = {}
 
+
+class RiskGuard:
+    """
+    Daily Drawdown Kill-Switch — prevents catastrophic losses.
+    Stops all trading after:
+      - Daily loss exceeds MAX_DAILY_LOSS_PCT of account
+      - MAX_CONSECUTIVE_LOSSES consecutive losing trades
+    Resets daily at midnight UTC.
+    """
+    def __init__(self, max_daily_loss_pct: float = 3.0, max_consecutive_losses: int = 4):
+        self.max_daily_loss_pct = max_daily_loss_pct
+        self.max_consecutive_losses = max_consecutive_losses
+        self.daily_pnl: float = 0.0
+        self.consecutive_losses: int = 0
+        self.trading_enabled: bool = True
+        self._last_reset_date: Optional[str] = None
+
+    def record_trade(self, pnl_pct: float):
+        """Records a completed trade PnL and checks kill-switch conditions."""
+        self.daily_pnl += pnl_pct
+        if pnl_pct < 0:
+            self.consecutive_losses += 1
+        else:
+            self.consecutive_losses = 0
+
+        if self.daily_pnl <= -self.max_daily_loss_pct:
+            self.trading_enabled = False
+            logger.warning(
+                f"🚨 [RISK GUARD] Daily loss {self.daily_pnl:.2f}% exceeds -{self.max_daily_loss_pct}% limit → TRADING DISABLED"
+            )
+        if self.consecutive_losses >= self.max_consecutive_losses:
+            self.trading_enabled = False
+            logger.warning(
+                f"🚨 [RISK GUARD] {self.consecutive_losses} consecutive losses → TRADING DISABLED"
+            )
+
+    def can_trade(self) -> bool:
+        """Returns True if trading is allowed, auto-resets at midnight UTC."""
+        today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        if self._last_reset_date != today:
+            self.daily_pnl = 0.0
+            self.consecutive_losses = 0
+            self.trading_enabled = True
+            self._last_reset_date = today
+            logger.info("[RISK GUARD] Daily reset — trading re-enabled")
+        return self.trading_enabled
+
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "trading_enabled": self.trading_enabled,
+            "daily_pnl_pct": round(self.daily_pnl, 2),
+            "consecutive_losses": self.consecutive_losses,
+            "max_daily_loss_pct": self.max_daily_loss_pct,
+            "max_consecutive_losses": self.max_consecutive_losses,
+        }
+
+
+# Global risk guard instance
+risk_guard: Optional[RiskGuard] = None
+
 def load_trade_history():
     """Loads historical completed trades from local persistent storage."""
     global completed_trades
@@ -146,7 +206,14 @@ def log_trade_exit(action: str, reason: str, exit_price: float):
     recent_standalone_logs.insert(0, event)
     if len(recent_standalone_logs) > 50:
         recent_standalone_logs.pop()
-        
+
+    # ── NEW: Record trade result in RiskGuard for kill-switch evaluation ──
+    if risk_guard is not None and entry_p > 0:
+        # Approximate PnL as % of entry notional (entry_price × size × contract_val)
+        notional = entry_p * size * contract_val
+        pnl_pct = (net_pnl / notional * 100) if notional > 0 else 0.0
+        risk_guard.record_trade(pnl_pct)
+
     active_trade_tracker = {}
 
 
@@ -250,13 +317,20 @@ class RenderHealthHandler(BaseHTTPRequestHandler):
 
                     rsi_s = bot.strategy.calculate_rsi(close_s, config.RSI_LENGTH)
                     atr_s = bot.strategy.calculate_atr(df, config.ATR_LENGTH)
+                    adx_s = bot.strategy.calculate_adx(df, bot.strategy.adx_length)
+                    adx_val = float(adx_s.iloc[-1]) if not adx_s.empty else 0.0
+                    regime_val = bot.strategy.detect_regime(df, bot.strategy.adx_length) if len(df) >= 55 else "trending"
+                    vol_ok = bot.strategy.has_volume_confirmation(df, bot.strategy.volume_multiplier, bot.strategy.volume_lookback)
 
                     market_info = {
                         "price": live_p,
                         "ema": live_ema,
                         "rsi": float(rsi_s.iloc[-1]) if not rsi_s.empty else 0.0,
                         "atr": float(atr_s.iloc[-1]) if not atr_s.empty else 0.0,
-                        "slope": slope_str
+                        "slope": slope_str,
+                        "adx": adx_val,
+                        "regime": regime_val,
+                        "volume_confirmed": vol_ok
                     }
 
                 active_sl = bot.last_exchange_stop_price or 0.0
@@ -284,6 +358,7 @@ class RenderHealthHandler(BaseHTTPRequestHandler):
                     "active_stop_price": active_sl,
                     "breakeven_locked": bot.strategy.breakeven_locked,
                     "market": market_info,
+                    "risk_guard": risk_guard.get_status() if risk_guard else None,
                     "stats": get_performance_stats(),
                     "completed_trades": completed_trades,
                     "exchange_fills": exchange_fills,
@@ -334,7 +409,7 @@ class StandaloneBot:
     and executes orders directly on candle close.
     """
     def __init__(self, symbol: Optional[str] = None, timeframe: Optional[str] = None):
-        global global_bot_instance
+        global global_bot_instance, risk_guard
         global_bot_instance = self
         self.symbol = (symbol or config.TRADING_SYMBOL).strip().upper()
         self.timeframe = timeframe or config.TIMEFRAME
@@ -359,11 +434,31 @@ class StandaloneBot:
             enable_emergency=config.ENABLE_EMERGENCY,
             emergency_atr=config.EMERGENCY_ATR,
             enable_live_entries=config.ENABLE_LIVE_ENTRIES,
-            enable_trend_continuation=config.ENABLE_TREND_CONTINUATION
+            enable_trend_continuation=config.ENABLE_TREND_CONTINUATION,
+            # ── NEW: Smart Filters ──
+            enable_volume_filter=config.ENABLE_VOLUME_FILTER,
+            volume_multiplier=config.VOLUME_MULTIPLIER,
+            volume_lookback=config.VOLUME_LOOKBACK,
+            enable_adx_filter=config.ENABLE_ADX_FILTER,
+            adx_length=config.ADX_LENGTH,
+            min_adx=config.MIN_ADX,
+            enable_regime_filter=config.ENABLE_REGIME_FILTER,
+            enable_mtf_alignment=config.ENABLE_MTF_ALIGNMENT,
         )
         self.last_processed_timestamp: Optional[int] = None
         self.last_entry_candle_timestamp: Optional[int] = None
         self.last_exchange_stop_price: Optional[float] = None
+
+        # ── NEW: Initialize Risk Guard ──
+        if config.ENABLE_RISK_GUARD:
+            risk_guard = RiskGuard(
+                max_daily_loss_pct=config.MAX_DAILY_LOSS_PCT,
+                max_consecutive_losses=config.MAX_CONSECUTIVE_LOSSES,
+            )
+            logger.info(
+                f"[RISK GUARD] Initialized: Max daily loss {config.MAX_DAILY_LOSS_PCT}%, "
+                f"Max consecutive losses {config.MAX_CONSECUTIVE_LOSSES}"
+            )
 
     def fetch_ohlcv_dataframe(self) -> Optional[pd.DataFrame]:
         """Fetches candles from Delta Exchange and converts to pandas DataFrame."""
@@ -549,6 +644,11 @@ class StandaloneBot:
                 self.sync_exchange_trailing_stop(latest_atr, live_price=live_price)
 
         # 2. REAL-TIME LIVE ENTRY CHECK (Runs every 1-2 seconds when flat - Single Entry Per 5m Candle!)
+        # ── NEW: Risk Guard check — skip new entries if daily loss limit exceeded ──
+        if risk_guard is not None and not risk_guard.can_trade():
+            if self.strategy.position_state == 0:
+                return  # Still manage exits above, but no new entries
+
         if config.ENABLE_LIVE_ENTRIES and self.strategy.position_state == 0:
             # Sweep any leftover orders if flat
             if self.last_exchange_stop_price is not None:
@@ -579,15 +679,28 @@ class StandaloneBot:
         close_price = confirmed_df["close"].iloc[-1]
 
         signal = self.strategy.get_latest_signal(confirmed_df)
-        
+
+        # ── NEW: Log regime and ADX for visibility ──
+        regime = "N/A"
+        curr_adx = 0.0
+        if len(confirmed_df) >= 55:
+            regime = self.strategy.detect_regime(confirmed_df, self.strategy.adx_length)
+            adx_s = self.strategy.calculate_adx(confirmed_df, self.strategy.adx_length)
+            curr_adx = float(adx_s.iloc[-1])
+
         logger.info(
             f"Candle Closed [{candle_ist.strftime('%Y-%m-%d %H:%M:%S IST')}] | Close: {close_price:.2f} | "
             f"RSI: {signal.metrics.get('rsi', 0):.1f} | ATR: {signal.metrics.get('atr', 0):.2f} | "
+            f"ADX: {curr_adx:.1f} | Regime: {regime.upper()} | "
             f"State: {signal.position_state} | Signal: {signal.action}"
         )
 
         if signal.action != "NONE":
-            self.execute_signal(signal, current_atr=latest_atr)
+            # ── NEW: Risk Guard check for confirmed candle entries ──
+            if signal.action in ("BUY", "SELL") and risk_guard is not None and not risk_guard.can_trade():
+                logger.warning(f"[RISK GUARD] Blocked {signal.action} — daily limit reached")
+            else:
+                self.execute_signal(signal, current_atr=latest_atr)
 
     def start(self):
         """Starts the infinite polling loop."""

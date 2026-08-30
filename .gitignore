@@ -3,6 +3,7 @@
 *.env
 *.pem
 *.key
+past bot/
 
 # Python
 __pycache__/
