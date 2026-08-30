@@ -461,7 +461,7 @@ class StrategyEngine:
         current_vol = float(vol.iloc[-1])
         if avg_vol <= 0:
             return True
-        return current_vol > (avg_vol * multiplier)
+        return bool(current_vol > (float(avg_vol) * multiplier))
 
     @staticmethod
     def detect_regime(df: pd.DataFrame, adx_length: int = 14, atr_short: int = 14, atr_long: int = 50) -> str:

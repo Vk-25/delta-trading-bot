@@ -558,7 +558,7 @@ DASHBOARD_HTML = """
                 </div>
 
                 <div class="section-header" style="margin-top: 1.25rem;">
-                    <span>⚡ Strategy Indicators (15m Live)</span>
+                    <span>⚡ Strategy Indicators & Smart Filters (15m Live)</span>
                 </div>
                 <div class="telemetry-grid mono">
                     <div class="tele-card">
@@ -576,6 +576,14 @@ DASHBOARD_HTML = """
                     <div class="tele-card">
                         <div class="tele-title">EMA Slope</div>
                         <div class="tele-val" id="val-slope">--</div>
+                    </div>
+                    <div class="tele-card">
+                        <div class="tele-title">ADX / Regime</div>
+                        <div class="tele-val" style="font-size: 0.95rem;" id="val-adx-regime">--</div>
+                    </div>
+                    <div class="tele-card">
+                        <div class="tele-title">Volume Filter</div>
+                        <div class="tele-val" style="font-size: 0.95rem;" id="val-volume-filter">--</div>
                     </div>
                 </div>
             </div>
@@ -984,10 +992,28 @@ DASHBOARD_HTML = """
             grossPnlElem.className = totalGross >= 0 ? "card-value mono positive" : "card-value mono negative";
 
             // 4. Indicators
-            document.getElementById('val-ema').innerText = data.market?.ema ? data.market.ema.toFixed(2) : '--';
-            document.getElementById('val-rsi').innerText = data.market?.rsi ? data.market.rsi.toFixed(1) : '--';
-            document.getElementById('val-atr').innerText = data.market?.atr ? `$${data.market.atr.toFixed(2)}` : '--';
+            document.getElementById('val-ema').innerText = (data.market?.ema !== undefined && data.market?.ema > 0) ? data.market.ema.toFixed(2) : '--';
+            document.getElementById('val-rsi').innerText = (data.market?.rsi !== undefined && data.market?.rsi > 0) ? data.market.rsi.toFixed(1) : '--';
+            document.getElementById('val-atr').innerText = (data.market?.atr !== undefined && data.market?.atr > 0) ? `$${data.market.atr.toFixed(2)}` : '--';
             document.getElementById('val-slope').innerText = data.market?.slope || '--';
+
+            // ADX & Regime
+            const adxVal = data.market?.adx ? parseFloat(data.market.adx).toFixed(1) : '0.0';
+            const regimeVal = (data.market?.regime || 'trending').toUpperCase();
+            const adxRegimeElem = document.getElementById('val-adx-regime');
+            if (adxRegimeElem) {
+                const isTrending = regimeVal === 'TRENDING' || parseFloat(adxVal) >= 20;
+                adxRegimeElem.innerHTML = `<span style="color: ${isTrending ? 'var(--emerald)' : 'var(--crimson)'}; font-weight: 700;">${adxVal}</span> <span style="font-size: 0.72rem; color: ${isTrending ? 'var(--emerald)' : 'var(--amber)'};">(${regimeVal})</span>`;
+            }
+
+            // Volume Filter Status
+            const volElem = document.getElementById('val-volume-filter');
+            if (volElem) {
+                const volOk = data.market?.volume_confirmed;
+                volElem.innerHTML = volOk 
+                    ? `<span style="color: var(--emerald); font-weight: 700;">HIGH VOL ✅</span>` 
+                    : `<span style="color: var(--amber); font-weight: 700;">LOW VOL ⚠️</span>`;
+            }
 
             // 5. Orders Table
             const ordersTbody = document.getElementById('orders-table-body');
@@ -1019,7 +1045,7 @@ DASHBOARD_HTML = """
                     const net = parseFloat(t.net_pnl !== undefined ? t.net_pnl : (gross - fee));
                     const netInr = parseFloat(t.net_pnl_inr !== undefined ? t.net_pnl_inr : (net * USD_TO_INR));
                     const isWin = t.is_profit !== undefined ? t.is_profit : (net > 0);
-                    const side = (t.side || 'BUY').toUpperCase();
+                    const side = String(t.side || 'BUY').toUpperCase();
                     const sideCol = side === 'BUY' ? 'var(--emerald)' : 'var(--crimson)';
                     const sideLabel = side === 'BUY' ? 'LONG 🟢' : 'SHORT 🔴';
                     const diff = parseFloat(t.price_diff !== undefined ? t.price_diff : ((side === 'BUY' ? 1 : -1) * (parseFloat(t.exit_price || 0) - parseFloat(t.entry_price || 0))));
@@ -1057,16 +1083,17 @@ DASHBOARD_HTML = """
                     const fee = Math.abs(parseFloat(l.fee || 0));
                     const net = parseFloat(l.net_pnl !== undefined ? l.net_pnl : (gross - fee));
                     const isClosed = l.status === 'CLOSED';
+                    const actStr = String(l.action || '').toUpperCase();
 
                     let actionBadge = '';
-                    if (l.action.includes('BUY')) actionBadge = '<span class="badge-pill badge-buy">BUY 🟢</span>';
-                    else if (l.action.includes('SELL')) actionBadge = '<span class="badge-pill badge-sell">SELL 🔴</span>';
-                    else if (l.action.includes('EXIT')) actionBadge = `<span class="badge-pill" style="background: rgba(245, 158, 11, 0.15); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.3);">${l.action} 🟠</span>`;
-                    else actionBadge = `<span class="badge-pill badge-flat">${l.action}</span>`;
+                    if (actStr.includes('BUY')) actionBadge = '<span class="badge-pill badge-buy">BUY 🟢</span>';
+                    else if (actStr.includes('SELL')) actionBadge = '<span class="badge-pill badge-sell">SELL 🔴</span>';
+                    else if (actStr.includes('EXIT')) actionBadge = `<span class="badge-pill" style="background: rgba(245, 158, 11, 0.15); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.3);">${actStr} 🟠</span>`;
+                    else actionBadge = `<span class="badge-pill badge-flat">${actStr}</span>`;
 
                     return `
                         <tr>
-                            <td style="color: var(--text-muted);">${l.time}</td>
+                            <td style="color: var(--text-muted);">${l.time || '--'}</td>
                             <td>${actionBadge}</td>
                             <td style="font-weight: 600;">$${parseFloat(l.price || 0).toFixed(2)}</td>
                             <td>${l.stop_loss ? '$' + parseFloat(l.stop_loss).toFixed(2) : '--'}</td>

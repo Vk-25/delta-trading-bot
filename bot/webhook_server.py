@@ -5,9 +5,11 @@ from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 import uvicorn
+import numpy as np
 import pandas as pd
 from bot.config import config
 from bot.delta_client import DeltaExchangeClient
+from bot.strategy_engine import StrategyEngine
 from bot.utils import logger
 from bot.dashboard import DASHBOARD_HTML
 
@@ -267,43 +269,46 @@ def get_dashboard_data():
     open_orders = orders_res.get("result", []) if isinstance(orders_res.get("result"), list) else []
 
     # 4. Fetch market candles for live indicators
-    candles_res = delta_client.get_candles(symbol, resolution=config.TIMEFRAME, limit=50)
-    market_info = {"price": 0.0, "ema": 0.0, "rsi": 0.0, "atr": 0.0, "slope": "--"}
+    candles_res = delta_client.get_candles(symbol, resolution=config.TIMEFRAME, limit=70)
+    market_info = {"price": 0.0, "ema": 0.0, "rsi": 0.0, "atr": 0.0, "slope": "--", "adx": 0.0, "regime": "trending", "volume_confirmed": True}
     c_res = candles_res.get("result", {})
     if c_res and "c" in c_res and len(c_res["c"]) > 25:
-        close_series = pd.Series(c_res["c"], dtype=float)
-        high_series = pd.Series(c_res["h"], dtype=float)
-        low_series = pd.Series(c_res["l"], dtype=float)
+        df_candles = pd.DataFrame({
+            "open": c_res.get("o", c_res["c"]),
+            "high": c_res.get("h", c_res["c"]),
+            "low": c_res.get("l", c_res["c"]),
+            "close": c_res["c"],
+            "volume": c_res.get("v", [100.0] * len(c_res["c"]))
+        })
+        close_series = pd.Series(df_candles["close"], dtype=float)
         
         live_p = float(close_series.iloc[-1])
-        ema_series = close_series.ewm(span=config.ENTRY_EMA_LENGTH, adjust=False).mean()
+        ema_series = StrategyEngine.calculate_ema(close_series, config.ENTRY_EMA_LENGTH)
         live_ema = float(ema_series.iloc[-1])
-        prev_ema = float(ema_series.iloc[-2])
+        prev_ema = float(ema_series.iloc[-2]) if len(ema_series) > 1 else live_ema
         slope_str = "RISING ↗" if live_ema >= prev_ema else "FALLING ↘"
 
-        # RSI
-        delta = close_series.diff()
-        gain = delta.clip(lower=0)
-        loss = -delta.clip(upper=0)
-        avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-        avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
-        rs = avg_gain / avg_loss.replace(0, np.nan)
-        rsi_val = float((100 - (100 / (1 + rs))).iloc[-1])
+        rsi_series = StrategyEngine.calculate_rsi(close_series, config.RSI_LENGTH)
+        rsi_val = float(rsi_series.iloc[-1]) if not rsi_series.empty else 50.0
 
-        # ATR
-        prev_c = close_series.shift(1)
-        tr1 = high_series - low_series
-        tr2 = (high_series - prev_c).abs()
-        tr3 = (low_series - prev_c).abs()
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr_val = float(tr.ewm(alpha=1/14, min_periods=14, adjust=False).mean().iloc[-1])
+        atr_series = StrategyEngine.calculate_atr(df_candles, config.ATR_LENGTH)
+        atr_val = float(atr_series.iloc[-1]) if not atr_series.empty else 0.0
+
+        adx_series = StrategyEngine.calculate_adx(df_candles, config.ADX_LENGTH)
+        adx_val = float(adx_series.iloc[-1]) if not adx_series.empty else 0.0
+
+        regime_val = StrategyEngine.detect_regime(df_candles, config.ADX_LENGTH) if len(df_candles) >= 55 else "trending"
+        vol_ok = StrategyEngine.has_volume_confirmation(df_candles, config.VOLUME_MULTIPLIER, config.VOLUME_LOOKBACK)
 
         market_info = {
             "price": live_p,
             "ema": live_ema,
             "rsi": rsi_val,
             "atr": atr_val,
-            "slope": slope_str
+            "slope": slope_str,
+            "adx": adx_val,
+            "regime": regime_val,
+            "volume_confirmed": vol_ok
         }
 
     # Find active stop loss price from open orders
