@@ -1,4 +1,4 @@
-﻿//@version=6
+//@version=6
 indicator("DeltaBot 100x | High-Frequency Scalper (60+ Trades/Day | 1m/3m/5m)", overlay=true, max_lines_count=500, max_boxes_count=100)
 
 // ============================================================================
@@ -156,16 +156,18 @@ if positionState == 1
     // Fast Scalp Take Profit
     bool tpExit = takeProfitATR > 0 and profitATR >= takeProfitATR
 
-    // Auto-Breakeven
+    float effFeeBuffer = math.max(feeBufferUSD, entryPrice * 0.0012)
+
+    // Auto-Breakeven (Guaranteed True Zero-Loss + Fees Covered)
     if enableBreakeven and profitATR >= breakevenATR
-        float beLevel = entryPrice + feeBufferUSD
+        float beLevel = entryPrice + effFeeBuffer
         if na(activeStopLoss) or activeStopLoss < beLevel
             activeStopLoss := beLevel
             beLocked := true
 
     // Dynamic Trailing Stop
     bool protectionActive = enableProtection and profitATR >= activationATR
-    float candidateStop = math.max(entryPrice + (beLocked ? feeBufferUSD : 0), highestPrice - exitATR * trailATR)
+    float candidateStop = math.max(entryPrice + (beLocked ? effFeeBuffer : 0), highestPrice - exitATR * trailATR)
     if protectionActive
         activeStopLoss := na(activeStopLoss) ? candidateStop : math.max(activeStopLoss, candidateStop)
 
@@ -193,16 +195,18 @@ if positionState == -1
     // Fast Scalp Take Profit
     bool tpExit = takeProfitATR > 0 and profitATR >= takeProfitATR
 
-    // Auto-Breakeven
+    float effFeeBuffer = math.max(feeBufferUSD, entryPrice * 0.0012)
+
+    // Auto-Breakeven (Guaranteed True Zero-Loss + Fees Covered)
     if enableBreakeven and profitATR >= breakevenATR
-        float beLevel = entryPrice - feeBufferUSD
+        float beLevel = entryPrice - effFeeBuffer
         if na(activeStopLoss) or activeStopLoss > beLevel
             activeStopLoss := beLevel
             beLocked := true
 
     // Dynamic Trailing Stop
     bool protectionActive = enableProtection and profitATR >= activationATR
-    float candidateStop = math.min(entryPrice - (beLocked ? feeBufferUSD : 0), lowestPrice + exitATR * trailATR)
+    float candidateStop = math.min(entryPrice - (beLocked ? effFeeBuffer : 0), lowestPrice + exitATR * trailATR)
     if protectionActive
         activeStopLoss := na(activeStopLoss) ? candidateStop : math.min(activeStopLoss, candidateStop)
 

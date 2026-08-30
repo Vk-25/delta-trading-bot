@@ -100,7 +100,7 @@ class TestStrategyEngine(unittest.TestCase):
         self.assertEqual(last_sig.position_state, 0)
 
     def test_realtime_intra_candle_trailing_exit(self):
-        engine = StrategyEngine(activation_atr=0.8, trail_atr=0.6, emergency_atr=2.0)
+        engine = StrategyEngine(activation_atr=0.8, trail_atr=0.6, take_profit_atr=0.0, emergency_atr=2.0)
         engine.sync_position(current_size=1, entry_price=79500.0)
         atr = 30.0
 
@@ -116,18 +116,18 @@ class TestStrategyEngine(unittest.TestCase):
         self.assertIn("RealtimeTrailingStop", sig2.reason)
 
     def test_autobreakeven_zero_loss(self):
-        engine = StrategyEngine(enable_breakeven=True, breakeven_atr=0.25, fee_buffer=0.5, activation_atr=0.50, trail_atr=0.40)
+        engine = StrategyEngine(enable_breakeven=True, breakeven_atr=0.25, fee_buffer=0.5, activation_atr=0.50, trail_atr=0.40, take_profit_atr=0.0)
         engine.sync_position(current_size=1, entry_price=2450.0)
         atr = 10.0
 
-        # Price moves +0.3 ATR (2453.0) -> Breakeven must lock stop to 2450.0 + 0.5 = 2450.5
-        sig1 = engine.check_realtime_exit(current_price=2453.0, current_atr=atr)
+        # Price moves +0.35 ATR (2453.5) -> Breakeven must lock stop to covers 0.12% fee (2450 + 2.94 = 2452.94)
+        sig1 = engine.check_realtime_exit(current_price=2453.5, current_atr=atr)
         self.assertIsNone(sig1)
         self.assertTrue(engine.breakeven_locked)
-        self.assertEqual(engine.long_trail_stop, 2450.5)
+        self.assertEqual(engine.long_trail_stop, 2452.94)
 
-        # Price drops back towards entry (2450.2) -> Triggers AutoBreakeven exit with positive profit, zero loss
-        sig2 = engine.check_realtime_exit(current_price=2450.2, current_atr=atr)
+        # Price drops back towards entry (2451.0) -> Triggers AutoBreakeven exit with positive profit, zero loss
+        sig2 = engine.check_realtime_exit(current_price=2451.0, current_atr=atr)
         self.assertIsNotNone(sig2)
         self.assertEqual(sig2.action, "EXIT_LONG")
         self.assertIn("AutoBreakeven", sig2.reason)

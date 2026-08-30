@@ -130,6 +130,18 @@ class StrategyEngine:
             if self.position_state != 0:
                 self.reset_state()
 
+    def get_fee_buffer_price(self, entry_price: float) -> float:
+        """
+        Calculates the exact price points needed to cover round-trip exchange fees (0.05% entry + 0.05% exit = 0.10%)
+        plus a small safety profit buffer, guaranteeing a true green zero-loss exit.
+        For ETH ($2800): 2800 * 0.0012 = $3.36 (covers $0.028 fee + gives green profit).
+        For BTC ($65000): 65000 * 0.0012 = $78.00 (covers $0.065 fee + gives green profit).
+        """
+        if entry_price is None or entry_price <= 0:
+            return self.fee_buffer
+        fee_pts = entry_price * 0.0012  # 0.10% RT taker fee + 0.02% safety buffer
+        return max(self.fee_buffer, fee_pts)
+
     def check_realtime_exit(self, current_price: float, current_atr: float) -> Optional[SignalResult]:
         """
         Checks real-time live price against Auto-Breakeven, Trailing Stop, Take Profit, and Emergency Stop
@@ -149,21 +161,27 @@ class StrategyEngine:
 
             profit_atr = (current_price - self.entry_price) / current_atr
 
+            eff_buffer = self.get_fee_buffer_price(self.entry_price)
+
             # 1. Take Profit
             if self.take_profit_atr > 0 and profit_atr >= self.take_profit_atr:
                 exit_reasons.append(f"RealtimeTakeProfit(+{profit_atr:.2f} ATR)")
 
-            # 2. Zero-Loss Auto-Breakeven Lock (+Fees)
-            if self.enable_breakeven and profit_atr >= self.breakeven_atr:
-                be_level = self.entry_price + self.fee_buffer
+            # 2. Zero-Loss Auto-Breakeven Lock (+Fees Covered)
+            if self.enable_breakeven and profit_atr >= self.breakeven_atr and (current_price >= self.entry_price + eff_buffer):
+                be_level = self.entry_price + eff_buffer
                 if self.long_trail_stop is None or self.long_trail_stop < be_level:
                     self.long_trail_stop = be_level
                     self.breakeven_locked = True
 
             # 3. Ratcheting Trailing Stop (Profit Protection)
             protection_active = self.enable_protection and (profit_atr >= self.activation_atr)
-            long_candidate_stop = max(self.entry_price + (self.fee_buffer if self.breakeven_locked else 0),
-                                      self.highest_price - (current_atr * self.trail_atr))
+            long_candidate_stop = self.highest_price - (current_atr * self.trail_atr)
+            if self.breakeven_locked:
+                long_candidate_stop = max(long_candidate_stop, self.entry_price + eff_buffer)
+            elif long_candidate_stop < self.entry_price:
+                long_candidate_stop = max(long_candidate_stop, self.entry_price)
+
             if protection_active:
                 if self.long_trail_stop is None:
                     self.long_trail_stop = long_candidate_stop
@@ -188,22 +206,27 @@ class StrategyEngine:
                 self.lowest_price = min(self.lowest_price, current_price)
 
             profit_atr = (self.entry_price - current_price) / current_atr
+            eff_buffer = self.get_fee_buffer_price(self.entry_price)
 
             # 1. Take Profit
             if self.take_profit_atr > 0 and profit_atr >= self.take_profit_atr:
                 exit_reasons.append(f"RealtimeTakeProfit(+{profit_atr:.2f} ATR)")
 
-            # 2. Zero-Loss Auto-Breakeven Lock (+Fees)
-            if self.enable_breakeven and profit_atr >= self.breakeven_atr:
-                be_level = self.entry_price - self.fee_buffer
+            # 2. Zero-Loss Auto-Breakeven Lock (+Fees Covered)
+            if self.enable_breakeven and profit_atr >= self.breakeven_atr and (current_price <= self.entry_price - eff_buffer):
+                be_level = self.entry_price - eff_buffer
                 if self.short_trail_stop is None or self.short_trail_stop > be_level:
                     self.short_trail_stop = be_level
                     self.breakeven_locked = True
 
             # 3. Ratcheting Trailing Stop (Profit Protection)
             protection_active = self.enable_protection and (profit_atr >= self.activation_atr)
-            short_candidate_stop = min(self.entry_price - (self.fee_buffer if self.breakeven_locked else 0),
-                                       self.lowest_price + (current_atr * self.trail_atr))
+            short_candidate_stop = self.lowest_price + (current_atr * self.trail_atr)
+            if self.breakeven_locked:
+                short_candidate_stop = min(short_candidate_stop, self.entry_price - eff_buffer)
+            elif short_candidate_stop > self.entry_price:
+                short_candidate_stop = min(short_candidate_stop, self.entry_price)
+
             if protection_active:
                 if self.short_trail_stop is None:
                     self.short_trail_stop = short_candidate_stop
@@ -737,20 +760,26 @@ class StrategyEngine:
                 # Profit Protection Trailing Stop
                 long_profit_atr = (curr_close - self.entry_price) / curr_atr if curr_atr > 0 else 0
                 protection_active = self.enable_protection and (long_profit_atr >= self.activation_atr)
+                eff_buffer = self.get_fee_buffer_price(self.entry_price)
                 
                 # 1. Scalp Take Profit (+0.85 ATR target)
                 tp_exit = self.take_profit_atr > 0 and (long_profit_atr >= self.take_profit_atr)
                 if tp_exit:
                     exit_reasons.append(f"TakeProfit(+{long_profit_atr:.2f} ATR)")
 
-                # 2. Auto-Breakeven Lock (+Fees)
-                if self.enable_breakeven and (long_profit_atr >= self.breakeven_atr):
-                    be_level = self.entry_price + self.fee_buffer
+                # 2. Auto-Breakeven Lock (+Fees Covered)
+                if self.enable_breakeven and (long_profit_atr >= self.breakeven_atr) and (curr_close >= self.entry_price + eff_buffer):
+                    be_level = self.entry_price + eff_buffer
                     self.long_trail_stop = max(self.long_trail_stop or 0, be_level)
                     self.breakeven_locked = True
 
                 # 3. Dynamic Trailing Stop
-                long_candidate_stop = max(self.entry_price + (self.fee_buffer if self.breakeven_locked else 0), self.highest_price - (curr_atr * self.trail_atr))
+                long_candidate_stop = self.highest_price - (curr_atr * self.trail_atr)
+                if self.breakeven_locked:
+                    long_candidate_stop = max(long_candidate_stop, self.entry_price + eff_buffer)
+                elif long_candidate_stop < self.entry_price:
+                    long_candidate_stop = max(long_candidate_stop, self.entry_price)
+
                 if protection_active:
                     if self.long_trail_stop is None:
                         self.long_trail_stop = long_candidate_stop
@@ -801,19 +830,24 @@ class StrategyEngine:
                 # Profit Protection Trailing Stop
                 short_profit_atr = (self.entry_price - curr_close) / curr_atr if curr_atr > 0 else 0
                 protection_active = self.enable_protection and (short_profit_atr >= self.activation_atr)
+                eff_buffer = self.get_fee_buffer_price(self.entry_price)
 
                 # 1. Scalp Take Profit (+0.85 ATR target)
                 tp_exit = self.take_profit_atr > 0 and (short_profit_atr >= self.take_profit_atr)
                 if tp_exit:
                     exit_reasons.append(f"TakeProfit(+{short_profit_atr:.2f} ATR)")
 
-                # 2. Auto-Breakeven Lock (+Fees)
-                if self.enable_breakeven and (short_profit_atr >= self.breakeven_atr):
-                    be_level = self.entry_price - self.fee_buffer
+                # 2. Auto-Breakeven Lock (+Fees Covered)
+                if self.enable_breakeven and (short_profit_atr >= self.breakeven_atr) and (curr_close <= self.entry_price - eff_buffer):
+                    be_level = self.entry_price - eff_buffer
                     self.short_trail_stop = min(self.short_trail_stop or float('inf'), be_level)
                     self.breakeven_locked = True
                 
-                short_candidate_stop = min(self.entry_price - (self.fee_buffer if self.breakeven_locked else 0), self.lowest_price + (curr_atr * self.trail_atr))
+                short_candidate_stop = self.lowest_price + (curr_atr * self.trail_atr)
+                if self.breakeven_locked:
+                    short_candidate_stop = min(short_candidate_stop, self.entry_price - eff_buffer)
+                elif short_candidate_stop > self.entry_price:
+                    short_candidate_stop = min(short_candidate_stop, self.entry_price)
                 if protection_active:
                     if self.short_trail_stop is None:
                         self.short_trail_stop = short_candidate_stop
