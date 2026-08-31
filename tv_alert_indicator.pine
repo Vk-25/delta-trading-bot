@@ -97,7 +97,7 @@ if buyBreakout
         exitShort := true
     newBuy := true
     positionState := 1
-    entryPrice := close
+    entryPrice := high[1]  // Pinned to the exact breakout level (e.g. $2,437.50)!
     highestPrice := high
     lowestPrice := na
     initialStop := low[1]
@@ -108,7 +108,7 @@ else if sellBreakout
         exitLong := true
     newSell := true
     positionState := -1
-    entryPrice := close
+    entryPrice := low[1]   // Pinned to the exact breakdown level!
     lowestPrice := low
     highestPrice := na
     initialStop := high[1]
