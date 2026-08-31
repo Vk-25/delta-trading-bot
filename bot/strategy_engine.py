@@ -211,45 +211,40 @@ class StrategyEngine:
         reason = ""
         stop_loss = None
 
-        # If currently in position, check trailing exit first, then check opposite signal close
-        if self.position_state != 0:
+        # 1. Breakout Entries & Seamless Reversals
+        if breakout_high:
+            action = "BUY"
+            if self.position_state == -1:
+                reason = f"Reverse_to_BUY(prev_high={prev_high:.2f}|cut_ema={prev_ema21:.2f})"
+            else:
+                reason = f"21_EMA_Cut_High_Break(prev_high={prev_high:.2f}|cut_ema={prev_ema21:.2f})"
+            stop_loss = prev_low
+            self.position_state = 1
+            self.entry_price = live_close
+            self.highest_price = live_high
+            self.lowest_price = None
+            self.initial_stop_loss = prev_low
+            self.active_trailing_stop = prev_low
+
+        elif breakout_low:
+            action = "SELL"
+            if self.position_state == 1:
+                reason = f"Reverse_to_SELL(prev_low={prev_low:.2f}|cut_ema={prev_ema21:.2f})"
+            else:
+                reason = f"21_EMA_Cut_Low_Break(prev_low={prev_low:.2f}|cut_ema={prev_ema21:.2f})"
+            stop_loss = prev_high
+            self.position_state = -1
+            self.entry_price = live_close
+            self.lowest_price = live_low
+            self.highest_price = None
+            self.initial_stop_loss = prev_high
+            self.active_trailing_stop = prev_high
+
+        # 2. If no new breakout entry, check trailing stop exit for active position
+        elif self.position_state != 0:
             realtime_exit = self.check_realtime_exit(live_close)
             if realtime_exit is not None:
                 return realtime_exit
-
-            # Opposite signal -> Close to Flat
-            if self.position_state == 1 and breakout_low and self.exit_on_opposite:
-                action = "EXIT_LONG"
-                reason = f"OppositeSignal(21_EMA_Cut_Low_Break={prev_low:.2f})"
-                self.reset_state()
-            elif self.position_state == -1 and breakout_high and self.exit_on_opposite:
-                action = "EXIT_SHORT"
-                reason = f"OppositeSignal(21_EMA_Cut_High_Break={prev_high:.2f})"
-                self.reset_state()
-
-        # If Flat, evaluate New Entries
-        elif self.position_state == 0:
-            if breakout_high:
-                action = "BUY"
-                reason = f"21_EMA_Cut_High_Break(prev_high={prev_high:.2f}|cut_ema={prev_ema21:.2f})"
-                stop_loss = prev_low
-                self.position_state = 1
-                self.entry_price = live_close
-                self.highest_price = live_high
-                self.lowest_price = None
-                self.initial_stop_loss = prev_low
-                self.active_trailing_stop = prev_low
-
-            elif breakout_low:
-                action = "SELL"
-                reason = f"21_EMA_Cut_Low_Break(prev_low={prev_low:.2f}|cut_ema={prev_ema21:.2f})"
-                stop_loss = prev_high
-                self.position_state = -1
-                self.entry_price = live_close
-                self.lowest_price = live_low
-                self.highest_price = None
-                self.initial_stop_loss = prev_high
-                self.active_trailing_stop = prev_high
 
         # 9 EMA analysis trend
         ema9_trend = "BULLISH" if live_close > live_ema9 else "BEARISH"
@@ -376,61 +371,41 @@ class StrategyEngine:
             exited_this_bar = False
 
             # 3. Position Management & 1:3 Trailing Take Profit
-            if self.position_state == 1:  # LONG
+            # 3. Handle Breakout Entries & Seamless Reversals
+            if raw_buy:
+                action = "BUY"
+                reason = f"21_EMA_Cut_High_Break(prev_high={prev_high:.2f})"
+                self.position_state = 1
+                self.entry_price = curr_close
+                self.highest_price = curr_high
+                self.lowest_price = None
+                self.initial_stop_loss = prev_low
+                self.active_trailing_stop = prev_low
+
+            elif raw_sell:
+                action = "SELL"
+                reason = f"21_EMA_Cut_Low_Break(prev_low={prev_low:.2f})"
+                self.position_state = -1
+                self.entry_price = curr_close
+                self.lowest_price = curr_low
+                self.highest_price = None
+                self.initial_stop_loss = prev_high
+                self.active_trailing_stop = prev_high
+
+            # 4. Handle Trailing Stop Exits if no new breakout
+            elif self.position_state == 1:  # LONG
                 trail_stop = self.update_1to3_trailing_stop(curr_close, high=curr_high, low=curr_low)
-                
-                # Check trailing exit
                 if trail_stop is not None and curr_low <= trail_stop:
                     action = "EXIT_LONG"
                     reason = f"TrailingStop1:3(stop={trail_stop:.2f})"
                     self.reset_state()
-                    exited_this_bar = True
-                
-                # Check opposite signal exit
-                elif raw_sell and self.exit_on_opposite:
-                    action = "EXIT_LONG"
-                    reason = f"OppositeSignal(21_EMA_Cut_Low_Break={prev_low:.2f})"
-                    self.reset_state()
-                    exited_this_bar = True
 
             elif self.position_state == -1:  # SHORT
                 trail_stop = self.update_1to3_trailing_stop(curr_close, high=curr_high, low=curr_low)
-                
-                # Check trailing exit
                 if trail_stop is not None and curr_high >= trail_stop:
                     action = "EXIT_SHORT"
                     reason = f"TrailingStop1:3(stop={trail_stop:.2f})"
                     self.reset_state()
-                    exited_this_bar = True
-                
-                # Check opposite signal exit
-                elif raw_buy and self.exit_on_opposite:
-                    action = "EXIT_SHORT"
-                    reason = f"OppositeSignal(21_EMA_Cut_High_Break={prev_high:.2f})"
-                    self.reset_state()
-                    exited_this_bar = True
-
-            # 4. Handle New Entries (Only if Flat and not exited on the same bar)
-            if self.position_state == 0 and not exited_this_bar:
-                if raw_buy:
-                    action = "BUY"
-                    reason = f"21_EMA_Cut_High_Break(prev_high={prev_high:.2f})"
-                    self.position_state = 1
-                    self.entry_price = curr_close
-                    self.highest_price = curr_high
-                    self.lowest_price = None
-                    self.initial_stop_loss = prev_low
-                    self.active_trailing_stop = prev_low
-
-                elif raw_sell:
-                    action = "SELL"
-                    reason = f"21_EMA_Cut_Low_Break(prev_low={prev_low:.2f})"
-                    self.position_state = -1
-                    self.entry_price = curr_close
-                    self.lowest_price = curr_low
-                    self.highest_price = None
-                    self.initial_stop_loss = prev_high
-                    self.active_trailing_stop = prev_high
 
             metrics = {
                 "ema21": curr_ema21,

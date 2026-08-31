@@ -132,7 +132,7 @@ class TestStrategyEngine(unittest.TestCase):
         self.assertIn("TrailingStop1:3", sig.reason)
         self.assertEqual(engine.position_state, 0)
 
-    def test_opposite_signal_exit_to_flat(self):
+    def test_opposite_signal_reversal(self):
         # Create a series where BUY happens, then an opposite SELL breakdown happens
         bars = [
             {"open": 100.0, "high": 102.0, "low": 98.0, "close": 100.0, "volume": 100},
@@ -143,16 +143,15 @@ class TestStrategyEngine(unittest.TestCase):
             # Bar 5: Cut EMA -> Bar 6: Buy
             {"open": 99.0, "high": 101.5, "low": 98.5, "close": 101.0, "volume": 100},
             {"open": 101.0, "high": 103.0, "low": 100.5, "close": 102.5, "volume": 100},
-            # Bar 7: Cuts EMA downward & breaks low -> Opposite signal triggers exit to Flat
+            # Bar 7: Cuts EMA downward & breaks low -> Opposite signal triggers reversal to Short (-1)
             {"open": 102.0, "high": 102.5, "low": 99.5, "close": 100.0, "volume": 100},
         ]
         df = pd.DataFrame(bars)
         results = self.engine.process_candles(df)
         
-        # On Bar 7, position should be exited to Flat (0)
-        self.assertEqual(results[-1].action, "EXIT_LONG")
-        self.assertEqual(results[-1].position_state, 0)
-        self.assertIn("OppositeSignal", results[-1].reason)
+        # On Bar 7, position should seamlessly reverse to SELL (-1)
+        self.assertEqual(results[-1].action, "SELL")
+        self.assertEqual(results[-1].position_state, -1)
 
     def test_symbol_profiles(self):
         eth_profile = config.get_symbol_profile("ETHUSD")
