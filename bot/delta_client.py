@@ -145,6 +145,10 @@ class DeltaExchangeClient:
         """Fetches wallet assets and available margin balances."""
         return self._request("GET", "/v2/wallet/balances")
 
+    def get_balances(self) -> Dict[str, Any]:
+        """Alias for get_wallet_balances."""
+        return self.get_wallet_balances()
+
     def get_products(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """Fetches and caches product definitions (contract specifications)."""
         now = time.time()

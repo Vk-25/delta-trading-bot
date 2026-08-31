@@ -332,14 +332,16 @@ class RenderHealthHandler(BaseHTTPRequestHandler):
         if bot:
             try:
                 # Wallet balances (real from Delta API)
-                wallets = bot.client.get_balances()
+                wallets_res = bot.client.get_wallet_balances()
+                wallets = wallets_res.get("result", []) if isinstance(wallets_res, dict) else (wallets_res if isinstance(wallets_res, list) else [])
                 for w in wallets:
-                    if w.get("asset_symbol") in ("USDT", "USD"):
+                    if isinstance(w, dict) and w.get("asset_symbol") in ("USDT", "USD", "INR", "USDC"):
                         wallet_info = {
                             "balance": float(w.get("balance") or 0.0),
-                            "available_balance": float(w.get("available_balance") or 0.0)
+                            "available_balance": float(w.get("available_balance") or w.get("balance") or 0.0)
                         }
-                        break
+                        if w.get("asset_symbol") in ("USDT", "USD"):
+                            break
             except Exception as e:
                 logger.warning(f"Error fetching wallet: {e}")
 
