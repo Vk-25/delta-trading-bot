@@ -253,6 +253,7 @@ class StrategyEngine:
 
         # 9 EMA analysis trend
         ema9_trend = "BULLISH" if live_close > live_ema9 else "BEARISH"
+        dynamic_lots = self.calculate_dynamic_lots(df, action) if action in ("BUY", "SELL") else 1
 
         return SignalResult(
             action=action,
@@ -272,8 +273,43 @@ class StrategyEngine:
                 "initial_stop": self.initial_stop_loss,
                 "trailing_stop": self.active_trailing_stop,
                 "stop_loss": stop_loss or self.active_trailing_stop,
+                "dynamic_lots": dynamic_lots,
             }
         )
+
+    def calculate_dynamic_lots(self, df: pd.DataFrame, action: str, min_lots: int = 1, max_lots: int = 3) -> int:
+        """
+        Calculates dynamic lot size (1 to 3 lots) for high-potential setups:
+        - 3 Lots: 9 EMA & 21 EMA trend alignment + strong cut candle direction + momentum expansion
+        - 2 Lots: Trend aligned or strong breakout momentum
+        - 1 Lot: Baseline entry
+        """
+        if len(df) < max(self.entry_ema_length, self.fast_ema_length) + 2 or action not in ("BUY", "SELL"):
+            return min_lots
+
+        ema21 = float(self.calculate_ema(df['close'], self.entry_ema_length).iloc[-1])
+        ema9 = float(self.calculate_ema(df['close'], self.fast_ema_length).iloc[-1])
+        
+        prev_open = float(df['open'].iloc[-2])
+        prev_close = float(df['close'].iloc[-2])
+        live_close = float(df['close'].iloc[-1])
+        
+        score = 1  # Base 1 lot
+        
+        # Factor 1: Trend Alignment (EMA 9 vs EMA 21)
+        trend_aligned = (action == "BUY" and ema9 > ema21) or (action == "SELL" and ema9 < ema21)
+        if trend_aligned:
+            score += 1
+            
+        # Factor 2: Candle Momentum (Cut candle body matches breakout direction)
+        candle_momentum = (action == "BUY" and prev_close >= prev_open) or (action == "SELL" and prev_close <= prev_open)
+        # Factor 3: Live price momentum (Live close strongly advancing beyond EMA 9)
+        price_momentum = (action == "BUY" and live_close > ema9) or (action == "SELL" and live_close < ema9)
+        
+        if candle_momentum and price_momentum:
+            score += 1
+
+        return max(min_lots, min(max_lots, score))
 
     # =========================================================================
     # INDICATOR CALCULATIONS

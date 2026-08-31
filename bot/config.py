@@ -55,6 +55,11 @@ class BotConfig:
     # Exit on Opposite Signal (Closes open position to Flat)
     EXIT_ON_OPPOSITE: bool = os.getenv("EXIT_ON_OPPOSITE", "true").lower() in ("true", "1", "yes")
 
+    # Dynamic Lot Sizing for Gold (XAUTUSD): 1 to 3 lots based on trend strength & momentum
+    ENABLE_DYNAMIC_LOTS: bool = os.getenv("ENABLE_DYNAMIC_LOTS", "true").lower() in ("true", "1", "yes")
+    MIN_XAUT_LOTS: int = int(os.getenv("MIN_XAUT_LOTS", "1"))
+    MAX_XAUT_LOTS: int = int(os.getenv("MAX_XAUT_LOTS", "3"))
+
     # Risk & Protection
     FEE_BUFFER_USD: float = float(os.getenv("FEE_BUFFER_USD", "0.50"))
     ENABLE_RISK_GUARD: bool = os.getenv("ENABLE_RISK_GUARD", "true").lower() in ("true", "1", "yes")

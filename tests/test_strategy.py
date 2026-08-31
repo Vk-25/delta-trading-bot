@@ -200,5 +200,20 @@ class TestStrategyEngine(unittest.TestCase):
         finally:
             sb.completed_trades = original_trades
 
+    def test_dynamic_lot_sizing_calculation(self):
+        # Create trending bullish data where EMA 9 > EMA 21 and momentum is strong
+        prices = [2500 + i * 2 for i in range(30)]
+        df = pd.DataFrame({
+            "timestamp": pd.date_range("2026-08-01", periods=30, freq="5min"),
+            "open": [p - 1 for p in prices],
+            "high": [p + 2 for p in prices],
+            "low": [p - 2 for p in prices],
+            "close": prices,
+            "volume": [100] * 30
+        })
+        lots = self.engine.calculate_dynamic_lots(df, "BUY", min_lots=1, max_lots=3)
+        self.assertGreaterEqual(lots, 2)
+        self.assertLessEqual(lots, 3)
+
 if __name__ == "__main__":
     unittest.main()

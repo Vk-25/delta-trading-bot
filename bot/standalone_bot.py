@@ -520,6 +520,7 @@ class SymbolTrader:
         profile = config.get_symbol_profile(self.symbol)
         self.leverage = profile.get("leverage", config.LEVERAGE)
         self.order_size = profile.get("order_size", config.ORDER_SIZE)
+        self.current_entry_size: int = self.order_size
 
         self.strategy = StrategyEngine(
             entry_ema_length=config.ENTRY_EMA_LENGTH,
@@ -558,15 +559,16 @@ class SymbolTrader:
 
     def sync_exchange_trailing_stop(self, live_price: Optional[float] = None):
         """Updates the real Stop-Loss order on Delta Exchange as the 1:3 trailing stop moves."""
+        active_size = self.current_entry_size or self.order_size
         if self.strategy.position_state == 1 and self.strategy.active_trailing_stop:
             new_sl = round(self.strategy.active_trailing_stop, 2)
             if live_price is not None and new_sl >= (live_price - 0.10):
                 return
 
             if self.last_exchange_stop_price is None or (new_sl - self.last_exchange_stop_price) >= 0.20:
-                logger.info(f"[{self.symbol}] Moving real Long Stop-Loss on Delta to {new_sl:.2f}")
+                logger.info(f"[{self.symbol}] Moving real Long Stop-Loss on Delta to {new_sl:.2f} (Size: {active_size} Lots)")
                 self.client.cancel_all_orders(self.symbol)
-                res = self.client.place_stop_order(self.symbol, self.order_size, "sell", stop_price=new_sl)
+                res = self.client.place_stop_order(self.symbol, active_size, "sell", stop_price=new_sl)
                 if res.get("success"):
                     self.last_exchange_stop_price = new_sl
 
@@ -576,9 +578,9 @@ class SymbolTrader:
                 return
 
             if self.last_exchange_stop_price is None or (self.last_exchange_stop_price - new_sl) >= 0.20:
-                logger.info(f"[{self.symbol}] Moving real Short Stop-Loss on Delta to {new_sl:.2f}")
+                logger.info(f"[{self.symbol}] Moving real Short Stop-Loss on Delta to {new_sl:.2f} (Size: {active_size} Lots)")
                 self.client.cancel_all_orders(self.symbol)
-                res = self.client.place_stop_order(self.symbol, self.order_size, "buy", stop_price=new_sl)
+                res = self.client.place_stop_order(self.symbol, active_size, "buy", stop_price=new_sl)
                 if res.get("success"):
                     self.last_exchange_stop_price = new_sl
 
@@ -590,15 +592,24 @@ class SymbolTrader:
         pos = self.client.get_position_for_symbol(self.symbol)
         existing_size = float(pos.get("size", 0)) if pos else 0
 
+        # Calculate dynamic lot size for XAUTUSD (up to 3 lots)
+        target_size = self.order_size
+        if "XAU" in self.symbol and config.ENABLE_DYNAMIC_LOTS:
+            dyn_lots = signal.metrics.get("dynamic_lots")
+            if dyn_lots and isinstance(dyn_lots, int) and dyn_lots > 0:
+                target_size = max(config.MIN_XAUT_LOTS, min(config.MAX_XAUT_LOTS, dyn_lots))
+                logger.info(f"[{self.symbol}] ⚡ Dynamic Sizing: Scaled up to {target_size} Lots (Quality Score: {dyn_lots}/3)")
+        self.current_entry_size = target_size
+
         if action == "BUY":
             if existing_size < 0:
                 logger.info(f"[{self.symbol}] Closing existing SHORT position ({existing_size}) before BUY...")
                 self.client.close_position(self.symbol)
 
-            logger.info(f"[{self.symbol}] Placing BUY order for {self.order_size} contracts ({self.leverage}x)...")
+            logger.info(f"[{self.symbol}] Placing BUY order for {target_size} contracts ({self.leverage}x)...")
             res = self.client.place_order(
                 symbol=self.symbol,
-                size=self.order_size,
+                size=target_size,
                 side="buy",
                 order_type=config.ORDER_TYPE
             )
@@ -613,10 +624,10 @@ class SymbolTrader:
                 explicit_sl = signal.metrics.get("stop_loss") or signal.metrics.get("prev_low") or (entry_p - 4.0)
                 initial_sl = round(float(explicit_sl), 2)
                 
-                self.strategy.sync_position(self.order_size, entry_p if entry_p > 0 else None, stop_loss=initial_sl)
-                logger.info(f"[{self.symbol}] [DELTA STOP PLACED] Stop-Loss at EMA Cut Low ({initial_sl:.2f}) on Delta...")
+                self.strategy.sync_position(target_size, entry_p if entry_p > 0 else None, stop_loss=initial_sl)
+                logger.info(f"[{self.symbol}] [DELTA STOP PLACED] Stop-Loss at EMA Cut Low ({initial_sl:.2f}) for {target_size} Lots...")
                 self.client.cancel_all_orders(self.symbol)
-                self.client.place_stop_order(self.symbol, self.order_size, "sell", stop_price=initial_sl)
+                self.client.place_stop_order(self.symbol, target_size, "sell", stop_price=initial_sl)
                 self.last_exchange_stop_price = initial_sl
                 log_standalone_event("BUY", signal.reason, entry_p, initial_sl, symbol=self.symbol)
             else:
@@ -628,10 +639,10 @@ class SymbolTrader:
                 logger.info(f"[{self.symbol}] Closing existing LONG position ({existing_size}) before SELL...")
                 self.client.close_position(self.symbol)
 
-            logger.info(f"[{self.symbol}] Placing SELL order for {self.order_size} contracts ({self.leverage}x)...")
+            logger.info(f"[{self.symbol}] Placing SELL order for {target_size} contracts ({self.leverage}x)...")
             res = self.client.place_order(
                 symbol=self.symbol,
-                size=self.order_size,
+                size=target_size,
                 side="sell",
                 order_type=config.ORDER_TYPE
             )
@@ -646,10 +657,10 @@ class SymbolTrader:
                 explicit_sl = signal.metrics.get("stop_loss") or signal.metrics.get("prev_high") or (entry_p + 4.0)
                 initial_sl = round(float(explicit_sl), 2)
 
-                self.strategy.sync_position(-self.order_size, entry_p if entry_p > 0 else None, stop_loss=initial_sl)
-                logger.info(f"[{self.symbol}] [DELTA STOP PLACED] Stop-Loss at EMA Cut High ({initial_sl:.2f}) on Delta...")
+                self.strategy.sync_position(-target_size, entry_p if entry_p > 0 else None, stop_loss=initial_sl)
+                logger.info(f"[{self.symbol}] [DELTA STOP PLACED] Stop-Loss at EMA Cut High ({initial_sl:.2f}) for {target_size} Lots...")
                 self.client.cancel_all_orders(self.symbol)
-                self.client.place_stop_order(self.symbol, self.order_size, "buy", stop_price=initial_sl)
+                self.client.place_stop_order(self.symbol, target_size, "buy", stop_price=initial_sl)
                 self.last_exchange_stop_price = initial_sl
                 log_standalone_event("SELL", signal.reason, entry_p, initial_sl, symbol=self.symbol)
             else:
