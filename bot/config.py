@@ -20,15 +20,17 @@ class BotConfig:
     # Security
     WEBHOOK_PASSPHRASE: str = os.getenv("WEBHOOK_PASSPHRASE", "").strip()
     
-    # Trade execution defaults
-    TRADING_SYMBOL: str = os.getenv("TRADING_SYMBOL", "ETHUSD").strip().upper()
+    # Trade execution defaults (supports comma-separated multi-symbols, e.g. "ETHUSD,XAUTUSD")
+    TRADING_SYMBOLS_RAW: str = os.getenv("TRADING_SYMBOLS", os.getenv("TRADING_SYMBOL", "ETHUSD,XAUTUSD")).strip().upper()
+    TRADING_SYMBOLS: list = [s.strip() for s in TRADING_SYMBOLS_RAW.split(",") if s.strip()]
+    TRADING_SYMBOL: str = TRADING_SYMBOLS[0] if TRADING_SYMBOLS else "ETHUSD"
     ORDER_SIZE: int = int(os.getenv("ORDER_SIZE", "1"))
     LEVERAGE: int = int(os.getenv("LEVERAGE", "130"))
     ORDER_TYPE: str = os.getenv("ORDER_TYPE", "market_order").strip()
     
     # Dynamic Symbol Leverage & Lot Sizing Profiles
     # ETHUSD: 130x leverage, 1 lot
-    # XAUTUSD: 60x leverage, 1-3 lots (default 1 lot)
+    # XAUTUSD / XAUUSD: 60x leverage, 1-3 lots (default 1 lot)
     SYMBOL_PROFILES: Dict[str, Dict[str, Any]] = {
         "ETHUSD": {"leverage": 130, "order_size": 1},
         "XAUTUSD": {"leverage": 60, "order_size": int(os.getenv("XAUT_ORDER_SIZE", "1"))},

@@ -23,14 +23,15 @@ class TestRiskGuardAndProfiles(unittest.TestCase):
         rg.record_trade(-0.1)  # 3 consecutive losses
         self.assertFalse(rg.can_trade())
 
-    def test_symbol_profiles_leverage(self):
-        eth_prof = config.get_symbol_profile("ETHUSD")
-        self.assertEqual(eth_prof["leverage"], 130)
-        self.assertEqual(eth_prof["order_size"], 1)
-
-        xaut_prof = config.get_symbol_profile("XAUTUSD")
-        self.assertEqual(xaut_prof["leverage"], 60)
-        self.assertGreaterEqual(xaut_prof["order_size"], 1)
+    def test_multi_symbol_standalone_initialization(self):
+        from bot.standalone_bot import StandaloneBot
+        bot = StandaloneBot(symbols=["ETHUSD", "XAUTUSD"])
+        self.assertIn("ETHUSD", bot.traders)
+        self.assertIn("XAUTUSD", bot.traders)
+        self.assertEqual(bot.traders["ETHUSD"].leverage, 130)
+        self.assertEqual(bot.traders["XAUTUSD"].leverage, 60)
+        self.assertEqual(bot.traders["ETHUSD"].order_size, 1)
+        self.assertEqual(bot.traders["XAUTUSD"].order_size, 1)
 
 if __name__ == "__main__":
     unittest.main()

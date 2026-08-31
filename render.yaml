@@ -16,8 +16,8 @@ services:
         sync: false
       - key: DELTA_API_SECRET
         sync: false
-      - key: TRADING_SYMBOL
-        value: ETHUSD
+      - key: TRADING_SYMBOLS
+        value: "ETHUSD,XAUTUSD"
       - key: TIMEFRAME
         value: "5m"
       - key: ORDER_SIZE

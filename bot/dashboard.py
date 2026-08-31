@@ -829,7 +829,12 @@ DASHBOARD_HTML = """
             // Header
             document.getElementById('el-strategy-name').innerText = data.strategy_name || '--';
             document.getElementById('el-env').innerText = data.environment || '--';
-            document.getElementById('el-symbol').innerText = data.symbol || '--';
+            
+            let symDisplay = data.symbol || '--';
+            if (data.symbols && data.symbols.length > 1) {
+                symDisplay = data.symbols.join(' + ');
+            }
+            document.getElementById('el-symbol').innerText = symDisplay;
             document.getElementById('el-timeframe').innerText = data.timeframe || '--';
             document.getElementById('el-leverage').innerText = (data.leverage || '--') + 'x';
 
@@ -839,28 +844,46 @@ DASHBOARD_HTML = """
             document.getElementById('el-wallet-inr').innerText = formatINR((wallet.available_balance || 0) * USD_TO_INR);
             document.getElementById('el-wallet-total').innerText = 'Total: ' + formatUSD(wallet.balance);
 
-            // Position Card
-            const strategy = data.strategy || {};
+            // Active Symbol Resolution
+            let activeSymData = null;
+            if (data.symbols_data && data.symbols_data.length > 0) {
+                for (let i = 0; i < data.symbols_data.length; i++) {
+                    if (data.symbols_data[i].strategy && data.symbols_data[i].strategy.position_state !== 0) {
+                        activeSymData = data.symbols_data[i];
+                        break;
+                    }
+                }
+                if (!activeSymData) {
+                    activeSymData = data.symbols_data[0];
+                }
+            }
+
+            const strategy = activeSymData ? activeSymData.strategy : (data.strategy || {});
             const posState = strategy.position_state || 0;
+            const currentPosition = activeSymData ? activeSymData.position : (data.position || {});
+            const currentSymbol = activeSymData ? activeSymData.symbol : (data.symbol || '');
+            const currentLeverage = activeSymData ? activeSymData.leverage : (data.leverage || '--');
+
+            // Position Card
             const posBadge = document.getElementById('el-pos-badge');
             const posEntry = document.getElementById('el-pos-entry');
             const posSize = document.getElementById('el-pos-size');
             
             if (posState === 1) {
                 posBadge.className = 'badge-green';
-                posBadge.innerText = 'LONG';
+                posBadge.innerText = (currentSymbol ? currentSymbol + ' ' : '') + 'LONG';
                 posEntry.innerText = formatPrice(strategy.entry_price);
-                posSize.innerText = 'Size: ' + (data.position ? data.position.size : '--') + ' Lots';
+                posSize.innerText = 'Size: ' + (currentPosition ? currentPosition.size : '--') + ' Lots (' + currentLeverage + 'x)';
             } else if (posState === -1) {
                 posBadge.className = 'badge-red';
-                posBadge.innerText = 'SHORT';
+                posBadge.innerText = (currentSymbol ? currentSymbol + ' ' : '') + 'SHORT';
                 posEntry.innerText = formatPrice(strategy.entry_price);
-                posSize.innerText = 'Size: ' + (data.position ? data.position.size : '--') + ' Lots';
+                posSize.innerText = 'Size: ' + (currentPosition ? currentPosition.size : '--') + ' Lots (' + currentLeverage + 'x)';
             } else {
                 posBadge.className = 'badge-gray';
                 posBadge.innerText = 'FLAT';
                 posEntry.innerText = '--';
-                posSize.innerText = 'No Active Position';
+                posSize.innerText = (data.symbols && data.symbols.length > 1 ? data.symbols.join(', ') + ' Monitoring' : 'No Active Position');
             }
 
             // PnL Cards
@@ -880,7 +903,7 @@ DASHBOARD_HTML = """
 
             // Live Position Panel
             const posPanel = document.getElementById('el-pos-panel');
-            if (posState !== 0 && data.position) {
+            if (posState !== 0 && currentPosition) {
                 posPanel.classList.add('active');
                 
                 document.getElementById('el-lp-entry').innerText = formatPrice(strategy.entry_price);
@@ -889,18 +912,18 @@ DASHBOARD_HTML = """
                 
                 const peak = posState === 1 ? strategy.highest_price : strategy.lowest_price;
                 document.getElementById('el-lp-peak').innerText = formatPrice(peak);
-                document.getElementById('el-lp-liq').innerText = formatPrice(data.position.liquidation_price);
+                document.getElementById('el-lp-liq').innerText = formatPrice(currentPosition.liquidation_price);
                 
-                const upnl = data.position.unrealized_pnl || 0;
+                const upnl = currentPosition.unrealized_pnl || 0;
                 const elUpnl = document.getElementById('el-lp-upnl');
                 elUpnl.innerText = formatUSD(upnl);
                 elUpnl.className = 'unrealized-pnl mono ' + formatColorClass(upnl);
                 document.getElementById('el-lp-upnl-inr').innerText = formatINR(upnl * USD_TO_INR);
                 
                 // Margin & ROI
-                const cv = strategy.contract_value || 1;
-                const lev = data.leverage || 1;
-                const size = Math.abs(data.position.size || 0);
+                const cv = strategy.contract_value || 0.01;
+                const lev = currentLeverage || 1;
+                const size = Math.abs(currentPosition.size || 0);
                 const ep = strategy.entry_price || 0;
                 
                 let margin = 0;
@@ -908,7 +931,7 @@ DASHBOARD_HTML = """
                     margin = (ep * cv * size) / lev;
                 }
                 
-                document.getElementById('el-lp-margin').innerText = 'Margin Used: ' + formatUSD(margin);
+                document.getElementById('el-lp-margin').innerText = 'Margin Used: ' + formatUSD(margin) + ' (' + currentSymbol + ')';
                 
                 if (margin > 0) {
                     const roi = (upnl / margin) * 100;
@@ -1052,11 +1075,12 @@ DASHBOARD_HTML = """
             const rowClass = t.win ? 'table-row-win' : 'table-row-loss';
             const sideBadge = t.side === 'BUY' ? '<span class="badge-green">BUY</span>' : '<span class="badge-red">SELL</span>';
             const resBadge = t.win ? '<span class="badge-green">WIN</span>' : '<span class="badge-red">LOSS</span>';
+            const symBadge = t.symbol ? '<span class="badge-gray" style="margin-right:6px;">' + t.symbol + '</span>' : '';
             
             return '<tr class="' + rowClass + '">' +
                 '<td>' + (t.entry_time || '--') + '</td>' +
                 '<td>' + (t.exit_time || '--') + '</td>' +
-                '<td>' + sideBadge + '</td>' +
+                '<td>' + symBadge + sideBadge + '</td>' +
                 '<td class="mono">' + formatPrice(t.entry_price) + '</td>' +
                 '<td class="mono">' + formatPrice(t.exit_price) + '</td>' +
                 '<td class="mono">' + (t.points !== undefined ? t.points.toFixed(2) : '--') + '</td>' +
@@ -1075,10 +1099,11 @@ DASHBOARD_HTML = """
             let actBadge = '<span class="badge-gray">' + l.action + '</span>';
             if (l.action === 'BUY') actBadge = '<span class="badge-green">BUY</span>';
             if (l.action === 'SELL') actBadge = '<span class="badge-red">SELL</span>';
+            const symBadge = l.symbol ? '<span class="badge-gray" style="margin-right:6px;">' + l.symbol + '</span>' : '';
 
             return '<tr class="' + rowClass + '">' +
                 '<td>' + (l.time || '--') + '</td>' +
-                '<td>' + actBadge + '</td>' +
+                '<td>' + symBadge + actBadge + '</td>' +
                 '<td>' + (l.reason || '--') + '</td>' +
                 '<td class="mono">' + formatPrice(l.price) + '</td>' +
                 '<td class="mono">' + formatPrice(l.stop_loss) + '</td>' +
@@ -1093,11 +1118,12 @@ DASHBOARD_HTML = """
             let sideBadge = '<span class="badge-gray">' + o.side + '</span>';
             if (o.side && o.side.toLowerCase() === 'buy') sideBadge = '<span class="badge-green">BUY</span>';
             if (o.side && o.side.toLowerCase() === 'sell') sideBadge = '<span class="badge-red">SELL</span>';
+            const symBadge = o.symbol ? '<span class="badge-gray" style="margin-right:6px;">' + o.symbol + '</span>' : '';
             
             return '<tr>' +
                 '<td>' + (o.id || '--') + '</td>' +
                 '<td>' + (o.order_type || '--') + '</td>' +
-                '<td>' + sideBadge + '</td>' +
+                '<td>' + symBadge + sideBadge + '</td>' +
                 '<td class="mono">' + formatPrice(o.stop_price || o.limit_price) + '</td>' +
                 '<td class="mono">' + (o.size || '--') + '</td>' +
                 '<td>' + (o.state || '--') + '</td>' +
@@ -1108,6 +1134,7 @@ DASHBOARD_HTML = """
             let sideBadge = '<span class="badge-gray">' + f.side + '</span>';
             if (f.side && f.side.toLowerCase() === 'buy') sideBadge = '<span class="badge-green">BUY</span>';
             if (f.side && f.side.toLowerCase() === 'sell') sideBadge = '<span class="badge-red">SELL</span>';
+            const symBadge = f.symbol ? '<span class="badge-gray" style="margin-right:6px;">' + f.symbol + '</span>' : '';
             
             let timeStr = '--';
             if (f.created_at) {
@@ -1117,7 +1144,7 @@ DASHBOARD_HTML = """
 
             return '<tr>' +
                 '<td>' + timeStr + '</td>' +
-                '<td>' + sideBadge + '</td>' +
+                '<td>' + symBadge + sideBadge + '</td>' +
                 '<td class="mono">' + formatPrice(f.price) + '</td>' +
                 '<td class="mono">' + (f.size || '--') + '</td>' +
                 '<td class="mono text-amber">' + formatUSD(f.fee) + '</td>' +
