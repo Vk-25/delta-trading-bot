@@ -32,9 +32,6 @@ prevBodyTop = math.max(open[1], close[1])
 prevBodyBottom = math.min(open[1], close[1])
 ema21Cut = (prevBodyBottom <= ema21[1]) and (prevBodyTop >= ema21[1])
 
-// Highlight 21 EMA Cut candles
-barcolor(ema21Cut ? color.new(color.purple, 30) : na, title="21 EMA Cut Candle Highlight")
-
 // 2. Breakouts on Current Immediate Candle [0]
 bool buyBreakout = ema21Cut and high > high[1]
 bool sellBreakout = ema21Cut and low < low[1]
@@ -97,7 +94,7 @@ if buyBreakout
         exitShort := true
     newBuy := true
     positionState := 1
-    entryPrice := high[1]  // Pinned to the exact breakout level (e.g. $2,437.50)!
+    entryPrice := high[1]  // Pinned to exact breakout level ($2,437.50)
     highestPrice := high
     lowestPrice := na
     initialStop := low[1]
@@ -108,7 +105,7 @@ else if sellBreakout
         exitLong := true
     newSell := true
     positionState := -1
-    entryPrice := low[1]   // Pinned to the exact breakdown level!
+    entryPrice := low[1]   // Pinned to exact breakdown level
     lowestPrice := low
     highestPrice := na
     initialStop := high[1]
