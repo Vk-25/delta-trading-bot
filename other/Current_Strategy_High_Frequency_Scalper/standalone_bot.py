@@ -12,7 +12,7 @@ from bot.strategy_engine import StrategyEngine, SignalResult
 from bot.utils import logger
 from bot.dashboard import DASHBOARD_HTML
 
-TRADE_FEE_PER_ORDER = 0.0144  # Baseline fee
+TRADE_FEE_PER_ORDER = 0.0144  # Default baseline USDT fee per order ($0.0144 for 1 lot ETH @ 100x taker fee 0.05%)
 TRADE_HISTORY_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "trade_history.json")
 
 global_bot_instance: Optional['StandaloneBot'] = None
@@ -48,12 +48,12 @@ class RiskGuard:
         if self.daily_pnl <= -self.max_daily_loss_pct:
             self.trading_enabled = False
             logger.warning(
-                f"[RISK GUARD] Daily loss {self.daily_pnl:.2f}% exceeds -{self.max_daily_loss_pct}% limit -> TRADING DISABLED"
+                f"🚨 [RISK GUARD] Daily loss {self.daily_pnl:.2f}% exceeds -{self.max_daily_loss_pct}% limit → TRADING DISABLED"
             )
         if self.consecutive_losses >= self.max_consecutive_losses:
             self.trading_enabled = False
             logger.warning(
-                f"[RISK GUARD] {self.consecutive_losses} consecutive losses -> TRADING DISABLED"
+                f"🚨 [RISK GUARD] {self.consecutive_losses} consecutive losses → TRADING DISABLED"
             )
 
     def can_trade(self) -> bool:
@@ -106,7 +106,7 @@ def save_trade_history():
 load_trade_history()
 
 def get_current_contract_value() -> float:
-    """Helper to get the contract value multiplier."""
+    """Helper to get the contract value multiplier (0.01 for ETH, 0.001 for BTC, 1.0 for SOL)."""
     if global_bot_instance and hasattr(global_bot_instance, "client"):
         return global_bot_instance.client.get_contract_value(config.TRADING_SYMBOL)
     sym = config.TRADING_SYMBOL.strip().upper()
@@ -116,8 +116,6 @@ def get_current_contract_value() -> float:
         return 0.001
     elif "SOL" in sym:
         return 1.0
-    elif "XAUT" in sym:
-        return 0.001
     return 0.01
 
 def calculate_order_fee(price: float, size: float, contract_val: float, taker_rate: float = 0.0005) -> float:
@@ -165,6 +163,7 @@ def log_trade_exit(action: str, reason: str, exit_price: float):
     size = active_trade_tracker.get("size") or config.ORDER_SIZE
     contract_val = get_current_contract_value()
     
+    # Delta Contract Multiplier: 1 contract = contract_val (e.g. 0.01 for ETHUSD, 0.001 for BTCUSD)
     if "LONG" in action or side == "BUY":
         price_diff = exit_price - entry_p
     else:
@@ -179,150 +178,225 @@ def log_trade_exit(action: str, reason: str, exit_price: float):
     is_profit = net_pnl > 0
     
     trade_record = {
-        "entry_time": active_trade_tracker.get("entry_time", "--"),
+        "entry_time": active_trade_tracker.get("entry_time", now_ist.strftime("%H:%M:%S IST")),
         "exit_time": now_ist.strftime("%H:%M:%S IST"),
-        "date": now_ist.strftime("%Y-%m-%d"),
-        "symbol": config.TRADING_SYMBOL,
         "side": side,
         "entry_price": entry_p,
         "exit_price": exit_price,
+        "price_diff": round(price_diff, 2),
         "size": size,
-        "points": round(price_diff, 2),
-        "gross_pnl": gross_pnl,
-        "fees": total_fee,
-        "net_pnl": net_pnl,
-        "net_pnl_inr": net_pnl_inr,
-        "exit_reason": reason,
-        "win": is_profit
+        "gross_pnl": round(gross_pnl, 4),
+        "fee": total_fee,
+        "net_pnl": round(net_pnl, 4),
+        "net_pnl_inr": round(net_pnl_inr, 2),
+        "is_profit": is_profit,
+        "reason": reason
     }
-    
     completed_trades.insert(0, trade_record)
+    if len(completed_trades) > 300:
+        completed_trades.pop()
     save_trade_history()
-    
-    # Record trade with Risk Guard
-    if risk_guard is not None:
-        pnl_pct = (price_diff / entry_p) * 100.0 if entry_p > 0 else 0.0
-        risk_guard.record_trade(pnl_pct)
-
+        
     event = {
         "time": now_ist.strftime("%H:%M:%S IST"),
         "action": action,
         "reason": reason,
         "price": exit_price,
         "stop_loss": None,
-        "gross_pnl": gross_pnl,
+        "gross_pnl": round(gross_pnl, 4),
         "fee": total_fee,
-        "net_pnl": net_pnl,
-        "net_pnl_inr": net_pnl_inr,
+        "net_pnl": round(net_pnl, 4),
+        "net_pnl_inr": round(net_pnl_inr, 2),
+        "is_profit": is_profit,
         "status": "CLOSED"
     }
     recent_standalone_logs.insert(0, event)
     if len(recent_standalone_logs) > 50:
         recent_standalone_logs.pop()
-        
+
+    # ── NEW: Record trade result in RiskGuard for kill-switch evaluation ──
+    if risk_guard is not None and entry_p > 0:
+        # Approximate PnL as % of entry notional (entry_price × size × contract_val)
+        notional = entry_p * size * contract_val
+        pnl_pct = (net_pnl / notional * 100) if notional > 0 else 0.0
+        risk_guard.record_trade(pnl_pct)
+
     active_trade_tracker = {}
+
+
+def get_performance_stats() -> Dict[str, Any]:
+    total = len(completed_trades)
+    profitable = len([t for t in completed_trades if t.get("is_profit") or (float(t.get("net_pnl", 0)) > 0)])
+    losses = total - profitable
+    win_rate = round((profitable / total * 100), 1) if total > 0 else 0.0
+    total_fees = round(sum(float(t.get("fee", 0.0144 * 2)) for t in completed_trades), 4)
+    total_gross = round(sum(float(t.get("gross_pnl", 0.0)) for t in completed_trades), 4)
+    total_net = round(sum(float(t.get("net_pnl", 0.0)) for t in completed_trades), 4)
+    total_net_inr = round(total_net * 87.5, 2)
+    
+    return {
+        "total_trades": total,
+        "profitable_trades": profitable,
+        "loss_trades": losses,
+        "win_rate": win_rate,
+        "total_fees": total_fees,
+        "total_gross_pnl": total_gross,
+        "total_net_pnl": total_net,
+        "total_net_pnl_inr": total_net_inr
+    }
 
 def log_standalone_event(action: str, reason: str, price: float, stop_loss: Optional[float] = None):
     if action in ("BUY", "SELL"):
         log_trade_entry(action, reason, price, stop_loss)
-    elif action in ("EXIT_LONG", "EXIT_SHORT"):
+    elif action in ("EXIT_LONG", "EXIT_SHORT", "EMERGENCY_CLOSE"):
         log_trade_exit(action, reason, price)
-
-def get_performance_stats() -> Dict[str, Any]:
-    if not completed_trades:
-        return {
-            "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
-            "total_net_pnl": 0.0, "total_fees": 0.0, "winning_trades": 0,
-            "losing_trades": 0, "daily_pnl": 0.0, "today_trades": 0
+    else:
+        now_ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
+        event = {
+            "time": now_ist.strftime("%H:%M:%S IST"),
+            "action": action,
+            "reason": reason,
+            "price": price,
+            "stop_loss": stop_loss,
+            "gross_pnl": 0.0,
+            "fee": 0.0,
+            "net_pnl": 0.0,
+            "net_pnl_inr": 0.0,
+            "status": "INFO"
         }
-    
-    total_trades = len(completed_trades)
-    winning_trades = sum(1 for t in completed_trades if t.get("win", False))
-    losing_trades = total_trades - winning_trades
-    win_rate = round((winning_trades / total_trades) * 100, 1) if total_trades > 0 else 0.0
-    
-    total_net_pnl = round(sum(t.get("net_pnl", 0.0) for t in completed_trades), 2)
-    total_fees = round(sum(t.get("fees", 0.0) for t in completed_trades), 2)
-    
-    gross_profits = sum(t.get("net_pnl", 0.0) for t in completed_trades if t.get("net_pnl", 0.0) > 0)
-    gross_losses = abs(sum(t.get("net_pnl", 0.0) for t in completed_trades if t.get("net_pnl", 0.0) < 0))
-    profit_factor = round(gross_profits / gross_losses, 2) if gross_losses > 0 else (99.9 if gross_profits > 0 else 0.0)
-    
-    today_str = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
-    today_trades_list = [t for t in completed_trades if t.get("date") == today_str]
-    daily_pnl = round(sum(t.get("net_pnl", 0.0) for t in today_trades_list), 2)
-    today_trades = len(today_trades_list)
-    
-    return {
-        "total_trades": total_trades,
-        "win_rate": win_rate,
-        "profit_factor": profit_factor,
-        "total_net_pnl": total_net_pnl,
-        "total_fees": total_fees,
-        "winning_trades": winning_trades,
-        "losing_trades": losing_trades,
-        "daily_pnl": daily_pnl,
-        "today_trades": today_trades
-    }
+        recent_standalone_logs.insert(0, event)
+        if len(recent_standalone_logs) > 50:
+            recent_standalone_logs.pop()
 
 class RenderHealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path in ("/", "/dashboard"):
+        if self.path == "/" or self.path == "/dashboard":
             self.send_response(200)
             self.send_header("Content-type", "text/html; charset=utf-8")
             self.end_headers()
             self.wfile.write(DASHBOARD_HTML.encode("utf-8"))
-        elif self.path == "/healthz":
+            return
+
+        elif self.path == "/health":
             self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok", "time": datetime.datetime.now(datetime.timezone.utc).isoformat()}).encode("utf-8"))
-        elif self.path == "/api/status":
+            self.wfile.write(b'{"status":"healthy","service":"Delta Standalone Bot","state":"active"}')
+            return
+
+        elif self.path == "/api/dashboard":
             self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.end_headers()
-            
-            rg_status = risk_guard.get_status() if risk_guard else {}
-            pos_info = {"size": 0, "entry_price": 0.0, "unrealized_pnl": 0.0}
-            wallet_info = {"balance": 0.0, "available_balance": 0.0}
-            
-            if global_bot_instance:
-                try:
-                    pos = global_bot_instance.client.get_position_for_symbol(global_bot_instance.symbol)
-                    if pos:
-                        pos_info = {
-                            "size": float(pos.get("size", 0)),
-                            "entry_price": float(pos.get("entry_price") or 0.0),
-                            "unrealized_pnl": float(pos.get("unrealized_pnl") or 0.0),
-                            "liquidation_price": float(pos.get("liquidation_price") or 0.0)
-                        }
-                    wallets = global_bot_instance.client.get_balances()
-                    for w in wallets:
-                        if w.get("asset_symbol") in ("USDT", "USD"):
-                            wallet_info = {
-                                "balance": float(w.get("balance") or 0.0),
-                                "available_balance": float(w.get("available_balance") or 0.0)
-                            }
+
+            if not global_bot_instance:
+                self.wfile.write(json.dumps({"status": "starting"}).encode("utf-8"))
+                return
+
+            try:
+                bot = global_bot_instance
+                # 1. Balances
+                balances_res = bot.client.get_wallet_balances()
+                available_usd = 0.0
+                total_usd = 0.0
+                if balances_res.get("success") and isinstance(balances_res.get("result"), list):
+                    for b in balances_res["result"]:
+                        available_usd += float(b.get("available_balance", 0))
+                        total_usd += float(b.get("balance", 0))
+
+                # 2. Position
+                pos = bot.client.get_position_for_symbol(bot.symbol) or {}
+
+                # 3. Open orders on Delta
+                orders_res = bot.client.get_open_orders(bot.symbol)
+                open_orders = orders_res.get("result", []) if isinstance(orders_res.get("result"), list) else []
+
+                # 4. Market indicators
+                df = bot.fetch_ohlcv_dataframe()
+                market_info = {"price": 0.0, "ema": 0.0, "rsi": 0.0, "atr": 0.0, "slope": "--"}
+                if df is not None and len(df) > 25:
+                    close_s = df["close"]
+                    live_p = float(close_s.iloc[-1])
+                    fema_s = close_s.ewm(span=config.FAST_EMA_LENGTH, adjust=False).mean()
+                    live_fema = float(fema_s.iloc[-1])
+                    ema_s = close_s.ewm(span=config.ENTRY_EMA_LENGTH, adjust=False).mean()
+                    live_ema = float(ema_s.iloc[-1])
+                    prev_ema = float(ema_s.iloc[-2])
+                    slope_str = "RISING ↗" if live_ema >= prev_ema else "FALLING ↘"
+
+                    rsi_s = bot.strategy.calculate_rsi(close_s, config.RSI_LENGTH)
+                    atr_s = bot.strategy.calculate_atr(df, config.ATR_LENGTH)
+                    adx_s = bot.strategy.calculate_adx(df, bot.strategy.adx_length)
+                    adx_val = float(adx_s.iloc[-1]) if not adx_s.empty else 0.0
+                    regime_val = bot.strategy.detect_regime(df, bot.strategy.adx_length) if len(df) >= 55 else "trending"
+                    vol_ok = bot.strategy.has_volume_confirmation(df, bot.strategy.volume_multiplier, bot.strategy.volume_lookback)
+
+                    market_info = {
+                        "price": live_p,
+                        "fast_ema": live_fema,
+                        "ema": live_ema,
+                        "rsi": float(rsi_s.iloc[-1]) if not rsi_s.empty else 0.0,
+                        "atr": float(atr_s.iloc[-1]) if not atr_s.empty else 0.0,
+                        "slope": slope_str,
+                        "adx": adx_val,
+                        "regime": regime_val,
+                        "volume_confirmed": vol_ok
+                    }
+
+                active_sl = bot.last_exchange_stop_price or 0.0
+                if active_sl == 0.0:
+                    for o in open_orders:
+                        if o.get("stop_price"):
+                            active_sl = float(o.get("stop_price"))
                             break
-                except Exception as e:
-                    logger.warning(f"Error fetching live API status: {e}")
-                    
-            resp_data = {
-                "environment": config.DELTA_ENVIRONMENT.upper(),
-                "symbol": global_bot_instance.symbol if global_bot_instance else config.TRADING_SYMBOL,
-                "timeframe": global_bot_instance.timeframe if global_bot_instance else config.TIMEFRAME,
-                "leverage": getattr(global_bot_instance, "leverage", config.LEVERAGE),
-                "position_state": global_bot_instance.strategy.position_state if global_bot_instance else 0,
-                "entry_price": global_bot_instance.strategy.entry_price if global_bot_instance else None,
-                "active_stop_loss": global_bot_instance.strategy.active_trailing_stop if global_bot_instance else None,
-                "wallet": wallet_info,
-                "position": pos_info,
-                "stats": get_performance_stats(),
-                "risk_guard": rg_status,
-                "recent_logs": recent_standalone_logs[:20],
-                "completed_trades": completed_trades[:50]
-            }
-            self.wfile.write(json.dumps(resp_data).encode("utf-8"))
+
+                # 5. Delta Exchange Real Fills
+                fills_res = bot.client.get_fills(bot.symbol, limit=20)
+                exchange_fills = fills_res.get("result", []) if (fills_res.get("success") and isinstance(fills_res.get("result"), list)) else []
+
+                payload = {
+                    "symbol": bot.symbol,
+                    "contract_value": bot.client.get_contract_value(bot.symbol),
+                    "timeframe": bot.timeframe,
+                    "leverage": config.LEVERAGE,
+                    "balances": {
+                        "available_usd": available_usd,
+                        "total_usd": total_usd
+                    },
+                    "position": pos,
+                    "open_orders": open_orders,
+                    "active_stop_price": active_sl,
+                    "breakeven_locked": bot.strategy.breakeven_locked,
+                    "market": market_info,
+                    "risk_guard": risk_guard.get_status() if risk_guard else None,
+                    "stats": get_performance_stats(),
+                    "completed_trades": completed_trades,
+                    "exchange_fills": exchange_fills,
+                    "recent_logs": recent_standalone_logs
+                }
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+            except Exception as e:
+                self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
+            return
+
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        if self.path == "/api/emergency_close":
+            if global_bot_instance:
+                global_bot_instance.client.close_position(global_bot_instance.symbol)
+                global_bot_instance.client.cancel_all_orders(global_bot_instance.symbol)
+                global_bot_instance.strategy.reset_state()
+                global_bot_instance.last_exchange_stop_price = None
+                log_standalone_event("EMERGENCY_CLOSE", "Dashboard Button", 0.0)
+
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"success":true,"message":"Position closed and all orders cancelled."}')
+            return
         else:
             self.send_response(404)
             self.end_headers()
@@ -342,7 +416,7 @@ class StandaloneBot:
     """
     Independent 24/7 background algorithmic runner.
     Fetches live candles from Delta Exchange, computes strategy logic,
-    and executes orders directly with 1:4 trailing profit management.
+    and executes orders directly on candle close.
     """
     def __init__(self, symbol: Optional[str] = None, timeframe: Optional[str] = None):
         global global_bot_instance, risk_guard
@@ -351,26 +425,46 @@ class StandaloneBot:
         self.timeframe = timeframe or config.TIMEFRAME
         self.poll_interval = config.POLL_INTERVAL_SECONDS
         
-        # Resolve dynamic symbol profile (ETHUSD 130x, XAUTUSD 60x)
-        profile = config.get_symbol_profile(self.symbol)
-        self.leverage = profile.get("leverage", config.LEVERAGE)
-        self.order_size = profile.get("order_size", config.ORDER_SIZE)
-
         self.client = DeltaExchangeClient()
         self.strategy = StrategyEngine(
             entry_ema_length=config.ENTRY_EMA_LENGTH,
-            fast_ema_length=config.FAST_EMA_LENGTH,
-            trail_move_unit=config.TRAIL_MOVE_UNIT,
-            trail_step_unit=config.TRAIL_STEP_UNIT,
-            trail_profit_ratio=config.TRAIL_PROFIT_RATIO,
+            exit_ema_length=config.EXIT_EMA_LENGTH,
+            rsi_length=config.RSI_LENGTH,
+            atr_length=config.ATR_LENGTH,
+            enable_smart_exit=config.ENABLE_SMART_EXIT,
             exit_on_opposite=config.EXIT_ON_OPPOSITE,
+            exit_confirmations=config.EXIT_CONFIRMATIONS,
+            enable_breakeven=config.ENABLE_BREAKEVEN,
+            breakeven_atr=config.BREAKEVEN_ATR,
             fee_buffer=config.FEE_BUFFER_USD,
+            enable_protection=config.ENABLE_PROTECTION,
+            activation_atr=config.ACTIVATION_ATR,
+            trail_atr=config.TRAIL_ATR,
+            take_profit_atr=config.TAKE_PROFIT_ATR,
+            enable_emergency=config.ENABLE_EMERGENCY,
+            emergency_atr=config.EMERGENCY_ATR,
+            enable_live_entries=config.ENABLE_LIVE_ENTRIES,
+            enable_trend_continuation=config.ENABLE_TREND_CONTINUATION,
+            # ── High-Frequency Scalper Parameters (60+ Entries/Day) ──
+            strategy_mode=config.STRATEGY_MODE,
+            fast_ema_length=config.FAST_EMA_LENGTH,
+            enable_range_breakout=config.ENABLE_RANGE_BREAKOUT,
+            enable_rsi_reversal=config.ENABLE_RSI_REVERSAL,
+            # ── Smart Filters ──
+            enable_volume_filter=config.ENABLE_VOLUME_FILTER,
+            volume_multiplier=config.VOLUME_MULTIPLIER,
+            volume_lookback=config.VOLUME_LOOKBACK,
+            enable_adx_filter=config.ENABLE_ADX_FILTER,
+            adx_length=config.ADX_LENGTH,
+            min_adx=config.MIN_ADX,
+            enable_regime_filter=config.ENABLE_REGIME_FILTER,
+            enable_mtf_alignment=config.ENABLE_MTF_ALIGNMENT,
         )
         self.last_processed_timestamp: Optional[int] = None
         self.last_entry_candle_timestamp: Optional[int] = None
         self.last_exchange_stop_price: Optional[float] = None
 
-        # Initialize Risk Guard
+        # ── NEW: Initialize Risk Guard ──
         if config.ENABLE_RISK_GUARD:
             risk_guard = RiskGuard(
                 max_daily_loss_pct=config.MAX_DAILY_LOSS_PCT,
@@ -390,6 +484,7 @@ class StandaloneBot:
             logger.warning(f"No candle data returned for {self.symbol} ({self.timeframe})")
             return None
 
+        # Delta chart history format: {"t": [...], "o": [...], "h": [...], "l": [...], "c": [...], "v": [...]}
         df = pd.DataFrame({
             "timestamp": result["t"],
             "open": result["o"],
@@ -403,33 +498,35 @@ class StandaloneBot:
         df.reset_index(drop=True, inplace=True)
         return df
 
-    def sync_exchange_trailing_stop(self, live_price: Optional[float] = None):
-        """Updates the real Stop-Loss order on Delta Exchange as the 1:4 trailing stop moves."""
-        if self.strategy.position_state == 1 and self.strategy.active_trailing_stop:
-            new_sl = round(self.strategy.active_trailing_stop, 2)
+    def sync_exchange_trailing_stop(self, current_atr: float, live_price: Optional[float] = None):
+        """Updates the real Stop-Loss order on Delta Exchange as the trailing stop moves."""
+        if self.strategy.position_state == 1 and self.strategy.long_trail_stop:
+            new_sl = round(self.strategy.long_trail_stop, 2)
+            # Long stop must be strictly below current market price
             if live_price is not None and new_sl >= (live_price - 0.10):
                 return
 
             if self.last_exchange_stop_price is None or (new_sl - self.last_exchange_stop_price) >= 0.20:
-                logger.info(f"[UPDATING DELTA STOP] Moving real Long Stop-Loss on Delta to {new_sl:.2f}")
+                logger.info(f"🛡️ [UPDATING DELTA STOP] Moving real Long Stop-Loss on Delta to {new_sl:.2f}")
                 self.client.cancel_all_orders(self.symbol)
-                res = self.client.place_stop_order(self.symbol, self.order_size, "sell", stop_price=new_sl)
+                res = self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "sell", stop_price=new_sl)
                 if res.get("success"):
                     self.last_exchange_stop_price = new_sl
 
-        elif self.strategy.position_state == -1 and self.strategy.active_trailing_stop:
-            new_sl = round(self.strategy.active_trailing_stop, 2)
+        elif self.strategy.position_state == -1 and self.strategy.short_trail_stop:
+            new_sl = round(self.strategy.short_trail_stop, 2)
+            # Short stop must be strictly above current market price
             if live_price is not None and new_sl <= (live_price + 0.10):
                 return
 
             if self.last_exchange_stop_price is None or (self.last_exchange_stop_price - new_sl) >= 0.20:
-                logger.info(f"[UPDATING DELTA STOP] Moving real Short Stop-Loss on Delta to {new_sl:.2f}")
+                logger.info(f"🛡️ [UPDATING DELTA STOP] Moving real Short Stop-Loss on Delta to {new_sl:.2f}")
                 self.client.cancel_all_orders(self.symbol)
-                res = self.client.place_stop_order(self.symbol, self.order_size, "buy", stop_price=new_sl)
+                res = self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "buy", stop_price=new_sl)
                 if res.get("success"):
                     self.last_exchange_stop_price = new_sl
 
-    def execute_signal(self, signal: SignalResult):
+    def execute_signal(self, signal: SignalResult, current_atr: float = 8.0):
         """Dispatches orders to Delta Exchange based on signal action."""
         action = signal.action
         logger.info(f"Executing Strategy Signal: [{action}] | Reason: {signal.reason} | Metrics: {signal.metrics}")
@@ -442,28 +539,37 @@ class StandaloneBot:
                 logger.info(f"Closing existing SHORT position ({existing_size}) before BUY...")
                 self.client.close_position(self.symbol)
 
-            logger.info(f"Placing BUY order for {self.order_size} contracts on {self.symbol} ({self.leverage}x)...")
+            logger.info(f"Placing BUY order for {config.ORDER_SIZE} contracts on {self.symbol}...")
             res = self.client.place_order(
                 symbol=self.symbol,
-                size=self.order_size,
+                size=config.ORDER_SIZE,
                 side="buy",
                 order_type=config.ORDER_TYPE
             )
+            # Only sync position if the order actually succeeded on Delta Exchange
             if res.get("success"):
                 entry_p = float(
                     res.get("result", {}).get("avg_fill_price") or
                     res.get("result", {}).get("average_fill_price") or
                     res.get("result", {}).get("price") or
                     signal.price or
+                    signal.metrics.get("live_price") or
+                    signal.metrics.get("current_price") or
                     0.0
                 )
-                explicit_sl = signal.metrics.get("stop_loss") or signal.metrics.get("prev_low") or (entry_p - 4.0)
-                initial_sl = round(float(explicit_sl), 2)
+                self.strategy.sync_position(config.ORDER_SIZE, entry_p if entry_p > 0 else None)
                 
-                self.strategy.sync_position(self.order_size, entry_p if entry_p > 0 else None, stop_loss=initial_sl)
-                logger.info(f"[DELTA STOP PLACED] Submitting Stop-Loss at EMA Cut Low ({initial_sl:.2f}) on Delta...")
+                # Stop Loss strictly placed at Low of EMA cutting candle (Pinpoint accuracy)
+                explicit_sl = signal.metrics.get("stop_loss")
+                if explicit_sl is not None and float(explicit_sl) < (entry_p - 0.20):
+                    initial_sl = round(float(explicit_sl), 2)
+                else:
+                    initial_sl = round(entry_p - (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 4.0), 2)
+
+                self.strategy.long_trail_stop = initial_sl
+                logger.info(f"🛡️ [DELTA STOP PLACED] Submitting Real Stop-Loss Order at EMA Cut Low ({initial_sl:.2f}) on Delta...")
                 self.client.cancel_all_orders(self.symbol)
-                self.client.place_stop_order(self.symbol, self.order_size, "sell", stop_price=initial_sl)
+                self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "sell", stop_price=initial_sl)
                 self.last_exchange_stop_price = initial_sl
                 log_standalone_event("BUY", signal.reason, entry_p, initial_sl)
             else:
@@ -475,28 +581,37 @@ class StandaloneBot:
                 logger.info(f"Closing existing LONG position ({existing_size}) before SELL...")
                 self.client.close_position(self.symbol)
 
-            logger.info(f"Placing SELL order for {self.order_size} contracts on {self.symbol} ({self.leverage}x)...")
+            logger.info(f"Placing SELL order for {config.ORDER_SIZE} contracts on {self.symbol}...")
             res = self.client.place_order(
                 symbol=self.symbol,
-                size=self.order_size,
+                size=config.ORDER_SIZE,
                 side="sell",
                 order_type=config.ORDER_TYPE
             )
+            # Only sync position if the order actually succeeded on Delta Exchange
             if res.get("success"):
                 entry_p = float(
                     res.get("result", {}).get("avg_fill_price") or
                     res.get("result", {}).get("average_fill_price") or
                     res.get("result", {}).get("price") or
                     signal.price or
+                    signal.metrics.get("live_price") or
+                    signal.metrics.get("current_price") or
                     0.0
                 )
-                explicit_sl = signal.metrics.get("stop_loss") or signal.metrics.get("prev_high") or (entry_p + 4.0)
-                initial_sl = round(float(explicit_sl), 2)
+                self.strategy.sync_position(-config.ORDER_SIZE, entry_p if entry_p > 0 else None)
+                
+                # Stop Loss strictly placed at High of EMA cutting candle (Pinpoint accuracy)
+                explicit_sl = signal.metrics.get("stop_loss")
+                if explicit_sl is not None and float(explicit_sl) > (entry_p + 0.20):
+                    initial_sl = round(float(explicit_sl), 2)
+                else:
+                    initial_sl = round(entry_p + (current_atr * config.EMERGENCY_ATR if current_atr > 0 else 4.0), 2)
 
-                self.strategy.sync_position(-self.order_size, entry_p if entry_p > 0 else None, stop_loss=initial_sl)
-                logger.info(f"[DELTA STOP PLACED] Submitting Stop-Loss at EMA Cut High ({initial_sl:.2f}) on Delta...")
+                self.strategy.short_trail_stop = initial_sl
+                logger.info(f"🛡️ [DELTA STOP PLACED] Submitting Real Stop-Loss Order at EMA Cut High ({initial_sl:.2f}) on Delta...")
                 self.client.cancel_all_orders(self.symbol)
-                self.client.place_stop_order(self.symbol, self.order_size, "buy", stop_price=initial_sl)
+                self.client.place_stop_order(self.symbol, config.ORDER_SIZE, "buy", stop_price=initial_sl)
                 self.last_exchange_stop_price = initial_sl
                 log_standalone_event("SELL", signal.reason, entry_p, initial_sl)
             else:
@@ -524,43 +639,52 @@ class StandaloneBot:
     def run_cycle(self):
         """Runs a single evaluation cycle with real-time profit protection & closed-bar entries."""
         df = self.fetch_ohlcv_dataframe()
-        if df is None or len(df) < 25:
+        if df is None or len(df) < 30:
             return
 
-        # 1. REAL-TIME INTRA-CANDLE EXIT & 1:4 TRAILING STOP SYNC
-        if self.strategy.position_state != 0:
+        # 1. REAL-TIME INTRA-CANDLE EXIT & TRAILING STOP SYNC (Runs every 1-2 seconds)
+        atr_series = self.strategy.calculate_atr(df, length=config.ATR_LENGTH)
+        latest_atr = float(atr_series.iloc[-1]) if not atr_series.empty else 8.0
+
+        if config.ENABLE_INTRA_CANDLE_EXIT and self.strategy.position_state != 0:
             live_price = float(df["close"].iloc[-1])
-            rt_signal = self.strategy.check_realtime_exit(live_price)
+
+            rt_signal = self.strategy.check_realtime_exit(live_price, latest_atr)
             if rt_signal and rt_signal.action != "NONE":
-                logger.info(f"[1:4 TRAILING EXIT] {rt_signal.action} -> {rt_signal.reason} (Price: {live_price:.2f})")
-                self.execute_signal(rt_signal)
+                logger.info(f"[REAL-TIME PROFIT LOCK] {rt_signal.action} -> {rt_signal.reason} (Price: {live_price:.2f})")
+                self.execute_signal(rt_signal, current_atr=latest_atr)
                 return
             else:
-                self.sync_exchange_trailing_stop(live_price=live_price)
+                # Keep real stop order on Delta Exchange synced with trailing stop / breakeven
+                self.sync_exchange_trailing_stop(latest_atr, live_price=live_price)
 
-        # 2. REAL-TIME LIVE ENTRY CHECK (Strictly 1 Entry Per 5m Candle on High/Low Break)
+        # 2. REAL-TIME LIVE ENTRY CHECK (Runs every 1-2 seconds when flat - Single Entry Per 5m Candle!)
+        # ── NEW: Risk Guard check — skip new entries if daily loss limit exceeded ──
         if risk_guard is not None and not risk_guard.can_trade():
             if self.strategy.position_state == 0:
-                return
+                return  # Still manage exits above, but no new entries
 
-        if self.strategy.position_state == 0:
+        if config.ENABLE_LIVE_ENTRIES and self.strategy.position_state == 0:
+            # Sweep any leftover orders if flat
             if self.last_exchange_stop_price is not None:
                 self.client.cancel_all_orders(self.symbol)
                 self.last_exchange_stop_price = None
 
             curr_candle_ts = int(df["timestamp"].iloc[-1].timestamp())
+            # Only enter ONCE per 5m candle
             if self.last_entry_candle_timestamp != curr_candle_ts:
                 live_entry_sig = self.strategy.get_live_signal(df)
                 if live_entry_sig and live_entry_sig.action in ("BUY", "SELL"):
-                    logger.info(f"[21 EMA CUT ENTRY] {live_entry_sig.action} -> {live_entry_sig.reason} (Price: {live_entry_sig.price:.2f})")
+                    logger.info(f"[REAL-TIME LIVE ENTRY] {live_entry_sig.action} -> {live_entry_sig.reason} (Price: {live_entry_sig.price:.2f})")
                     self.last_entry_candle_timestamp = curr_candle_ts
-                    self.execute_signal(live_entry_sig)
+                    self.execute_signal(live_entry_sig, current_atr=latest_atr)
                     return
 
-        # 3. CONFIRMED CANDLE CLOSE STRATEGY EVALUATION
+        # 3. CONFIRMED CANDLE CLOSE STRATEGY EVALUATION (Runs on every completed bar)
         confirmed_df = df.iloc[:-1].copy()
         latest_timestamp = int(confirmed_df["timestamp"].iloc[-1].timestamp())
 
+        # Only process once per confirmed candle close
         if self.last_processed_timestamp == latest_timestamp:
             return
 
@@ -571,21 +695,31 @@ class StandaloneBot:
 
         signal = self.strategy.get_latest_signal(confirmed_df)
 
+        # ── NEW: Log regime and ADX for visibility ──
+        regime = "N/A"
+        curr_adx = 0.0
+        if len(confirmed_df) >= 55:
+            regime = self.strategy.detect_regime(confirmed_df, self.strategy.adx_length)
+            adx_s = self.strategy.calculate_adx(confirmed_df, self.strategy.adx_length)
+            curr_adx = float(adx_s.iloc[-1])
+
         logger.info(
             f"Candle Closed [{candle_ist.strftime('%Y-%m-%d %H:%M:%S IST')}] | Close: {close_price:.2f} | "
-            f"EMA21: {signal.metrics.get('ema21', 0):.2f} | EMA9: {signal.metrics.get('ema9', 0):.2f} | "
+            f"RSI: {signal.metrics.get('rsi', 0):.1f} | ATR: {signal.metrics.get('atr', 0):.2f} | "
+            f"ADX: {curr_adx:.1f} | Regime: {regime.upper()} | "
             f"State: {signal.position_state} | Signal: {signal.action}"
         )
 
         if signal.action != "NONE":
+            # ── NEW: Risk Guard check for confirmed candle entries ──
             if signal.action in ("BUY", "SELL") and risk_guard is not None and not risk_guard.can_trade():
                 logger.warning(f"[RISK GUARD] Blocked {signal.action} — daily limit reached")
             else:
-                self.execute_signal(signal)
+                self.execute_signal(signal, current_atr=latest_atr)
 
     def start(self):
         """Starts the infinite polling loop."""
-        logger.info(f"Starting Standalone Bot for {self.symbol} on {self.timeframe} (Leverage: {self.leverage}x, Size: {self.order_size} Lot, Delta Env: {config.DELTA_ENVIRONMENT})...")
+        logger.info(f"Starting Standalone Bot for {self.symbol} on {self.timeframe} timeframe (Delta Environment: {config.DELTA_ENVIRONMENT})...")
         
         # Bind to Render HTTP port if running as a Web Service
         render_port = os.getenv("PORT")
@@ -596,9 +730,9 @@ class StandaloneBot:
             except Exception as e:
                 logger.warning(f"Could not start background health thread: {e}")
 
-        # Set leverage
+        # Verify connection and set leverage
         try:
-            self.client.set_leverage(self.symbol, self.leverage)
+            self.client.set_leverage(self.symbol, config.LEVERAGE)
         except Exception as e:
             logger.warning(f"Could not set initial leverage: {e}")
 

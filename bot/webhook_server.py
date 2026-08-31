@@ -106,7 +106,8 @@ def calculate_order_fee(price: float, size: float, contract_val: float, taker_ra
 def process_trade_action(payload: WebhookPayload) -> dict:
     global webhook_active_tracker
     symbol = (payload.symbol or config.TRADING_SYMBOL).strip().upper()
-    size = payload.size if payload.size is not None and payload.size > 0 else config.ORDER_SIZE
+    profile = config.get_symbol_profile(symbol)
+    size = payload.size if payload.size is not None and payload.size > 0 else profile.get("order_size", config.ORDER_SIZE)
     order_type = (payload.order_type or config.ORDER_TYPE).lower()
     action = payload.action.upper()
     now_ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)

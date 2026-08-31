@@ -7,10 +7,23 @@ import logging
 import json
 from typing import Any, Dict, Optional
 
+# Ensure UTF-8 output on Windows consoles
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 class FlushStreamHandler(logging.StreamHandler):
     def emit(self, record):
-        super().emit(record)
-        self.flush()
+        try:
+            super().emit(record)
+            self.flush()
+        except Exception:
+            self.handleError(record)
 
 class ISTFormatter(logging.Formatter):
     """Formats timestamps in Indian Standard Time (IST / UTC+5:30)."""
