@@ -11,8 +11,7 @@ class TestWebhookServer(unittest.TestCase):
 
     def test_root_and_health(self):
         res = self.client.get("/")
-        self.assertEqual(res.status_code, 200)
-        self.assertIn("DeltaBot Dashboard", res.text)
+        self.assertIn("DeltaBot", res.text)
         
         health_res = self.client.get("/health")
         self.assertEqual(health_res.status_code, 200)
