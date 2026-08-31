@@ -167,13 +167,22 @@ class DeltaExchangeClient:
         return []
 
     def get_product(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """Resolves symbol (e.g. BTCUSD) to product dictionary."""
+        """Resolves symbol (e.g. BTCUSD, ETHUSD, XAUTUSD/XAUUSD) to product dictionary."""
         sym_clean = symbol.strip().upper()
         if sym_clean in self._product_cache:
             return self._product_cache[sym_clean]
         
+        # Check alias (e.g. XAUUSD -> XAUTUSD or XAUTUSD -> XAUUSD)
+        alias = "XAUTUSD" if sym_clean == "XAUUSD" else ("XAUUSD" if sym_clean == "XAUTUSD" else None)
+        if alias and alias in self._product_cache:
+            return self._product_cache[alias]
+        
         self.get_products(force_refresh=True)
-        return self._product_cache.get(sym_clean)
+        if sym_clean in self._product_cache:
+            return self._product_cache[sym_clean]
+        if alias and alias in self._product_cache:
+            return self._product_cache[alias]
+        return None
 
     def get_product_id(self, symbol: str) -> Optional[int]:
         """Resolves symbol (e.g. BTCUSD) to numeric product ID."""
@@ -183,7 +192,7 @@ class DeltaExchangeClient:
         return None
 
     def get_contract_value(self, symbol: str) -> float:
-        """Resolves symbol to its contract value multiplier (e.g. 0.01 for ETHUSD, 0.001 for BTCUSD)."""
+        """Resolves symbol to its contract value multiplier (e.g. 0.01 for ETHUSD, 0.001 for BTCUSD/XAUTUSD)."""
         prod = self.get_product(symbol)
         if prod and "contract_value" in prod:
             try:
@@ -199,6 +208,8 @@ class DeltaExchangeClient:
             return 0.001
         elif "SOL" in sym:
             return 1.0
+        elif "XAU" in sym or "XAUT" in sym:
+            return 0.001
         return 0.01
 
 

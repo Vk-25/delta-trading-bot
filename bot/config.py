@@ -32,6 +32,7 @@ class BotConfig:
     SYMBOL_PROFILES: Dict[str, Dict[str, Any]] = {
         "ETHUSD": {"leverage": 130, "order_size": 1},
         "XAUTUSD": {"leverage": 60, "order_size": int(os.getenv("XAUT_ORDER_SIZE", "1"))},
+        "XAUUSD": {"leverage": 60, "order_size": int(os.getenv("XAUT_ORDER_SIZE", "1"))},
         "BTCUSD": {"leverage": 100, "order_size": 1},
     }
 
