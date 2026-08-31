@@ -229,12 +229,15 @@ def log_standalone_event(action: str, reason: str, price: float, stop_loss: Opti
         log_trade_exit(action, reason, price)
 
 def get_performance_stats() -> Dict[str, Any]:
+    empty = {
+        "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
+        "total_net_pnl": 0.0, "total_fees": 0.0, "winning_trades": 0,
+        "losing_trades": 0, "daily_pnl": 0.0, "today_trades": 0,
+        "avg_win": 0.0, "avg_loss": 0.0, "best_trade": 0.0,
+        "worst_trade": 0.0, "max_streak_win": 0, "max_streak_loss": 0
+    }
     if not completed_trades:
-        return {
-            "total_trades": 0, "win_rate": 0.0, "profit_factor": 0.0,
-            "total_net_pnl": 0.0, "total_fees": 0.0, "winning_trades": 0,
-            "losing_trades": 0, "daily_pnl": 0.0, "today_trades": 0
-        }
+        return empty
     
     total_trades = len(completed_trades)
     winning_trades = sum(1 for t in completed_trades if t.get("win", False))
@@ -244,9 +247,34 @@ def get_performance_stats() -> Dict[str, Any]:
     total_net_pnl = round(sum(t.get("net_pnl", 0.0) for t in completed_trades), 2)
     total_fees = round(sum(t.get("fees", 0.0) for t in completed_trades), 2)
     
-    gross_profits = sum(t.get("net_pnl", 0.0) for t in completed_trades if t.get("net_pnl", 0.0) > 0)
-    gross_losses = abs(sum(t.get("net_pnl", 0.0) for t in completed_trades if t.get("net_pnl", 0.0) < 0))
+    win_pnls = [t.get("net_pnl", 0.0) for t in completed_trades if t.get("net_pnl", 0.0) > 0]
+    loss_pnls = [t.get("net_pnl", 0.0) for t in completed_trades if t.get("net_pnl", 0.0) < 0]
+    
+    gross_profits = sum(win_pnls)
+    gross_losses = abs(sum(loss_pnls))
     profit_factor = round(gross_profits / gross_losses, 2) if gross_losses > 0 else (99.9 if gross_profits > 0 else 0.0)
+    
+    avg_win = round(sum(win_pnls) / len(win_pnls), 4) if win_pnls else 0.0
+    avg_loss = round(sum(loss_pnls) / len(loss_pnls), 4) if loss_pnls else 0.0
+    
+    all_pnls = [t.get("net_pnl", 0.0) for t in completed_trades]
+    best_trade = round(max(all_pnls), 4) if all_pnls else 0.0
+    worst_trade = round(min(all_pnls), 4) if all_pnls else 0.0
+    
+    # Calculate max win/loss streaks (completed_trades is newest-first, reverse for chronological)
+    max_streak_win = 0
+    max_streak_loss = 0
+    current_win = 0
+    current_loss = 0
+    for t in reversed(completed_trades):
+        if t.get("win", False):
+            current_win += 1
+            current_loss = 0
+            max_streak_win = max(max_streak_win, current_win)
+        else:
+            current_loss += 1
+            current_win = 0
+            max_streak_loss = max(max_streak_loss, current_loss)
     
     today_str = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)).strftime("%Y-%m-%d")
     today_trades_list = [t for t in completed_trades if t.get("date") == today_str]
@@ -262,10 +290,150 @@ def get_performance_stats() -> Dict[str, Any]:
         "winning_trades": winning_trades,
         "losing_trades": losing_trades,
         "daily_pnl": daily_pnl,
-        "today_trades": today_trades
+        "today_trades": today_trades,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "best_trade": best_trade,
+        "worst_trade": worst_trade,
+        "max_streak_win": max_streak_win,
+        "max_streak_loss": max_streak_loss
     }
 
 class RenderHealthHandler(BaseHTTPRequestHandler):
+    def _send_json(self, data: dict, status: int = 200):
+        self.send_response(status)
+        self.send_header("Content-type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode("utf-8"))
+
+    def _build_dashboard_payload(self) -> dict:
+        """Builds the complete dashboard API response with all real data."""
+        rg_status = risk_guard.get_status() if risk_guard else {
+            "trading_enabled": True, "daily_pnl_pct": 0.0,
+            "consecutive_losses": 0, "max_daily_loss_pct": 3.0,
+            "max_consecutive_losses": 4
+        }
+        pos_info = {"size": 0, "entry_price": 0.0, "unrealized_pnl": 0.0, "liquidation_price": 0.0}
+        wallet_info = {"balance": 0.0, "available_balance": 0.0}
+        open_orders_list = []
+        exchange_fills_list = []
+        contract_val = 0.01
+
+        bot = global_bot_instance
+        if bot:
+            try:
+                # Wallet balances (real from Delta API)
+                wallets = bot.client.get_balances()
+                for w in wallets:
+                    if w.get("asset_symbol") in ("USDT", "USD"):
+                        wallet_info = {
+                            "balance": float(w.get("balance") or 0.0),
+                            "available_balance": float(w.get("available_balance") or 0.0)
+                        }
+                        break
+            except Exception as e:
+                logger.warning(f"Error fetching wallet: {e}")
+
+            try:
+                # Position (real from Delta API)
+                pos = bot.client.get_position_for_symbol(bot.symbol)
+                if pos:
+                    pos_info = {
+                        "size": float(pos.get("size", 0)),
+                        "entry_price": float(pos.get("entry_price") or 0.0),
+                        "unrealized_pnl": float(pos.get("unrealized_pnl") or 0.0),
+                        "liquidation_price": float(pos.get("liquidation_price") or 0.0)
+                    }
+            except Exception as e:
+                logger.warning(f"Error fetching position: {e}")
+
+            try:
+                # Contract value (real from Delta API)
+                contract_val = bot.client.get_contract_value(bot.symbol)
+            except Exception:
+                contract_val = get_current_contract_value()
+
+            try:
+                # Open orders (real from Delta API)
+                orders = bot.client.get_open_orders(bot.symbol)
+                if isinstance(orders, list):
+                    open_orders_list = [{
+                        "id": str(o.get("id", "")),
+                        "order_type": o.get("order_type", "unknown"),
+                        "side": o.get("side", ""),
+                        "stop_price": float(o.get("stop_price") or 0.0),
+                        "limit_price": float(o.get("limit_price") or o.get("price") or 0.0),
+                        "size": int(o.get("size") or 0),
+                        "state": o.get("state", "open")
+                    } for o in orders]
+            except Exception as e:
+                logger.warning(f"Error fetching open orders: {e}")
+
+            try:
+                # Exchange fills (real from Delta API)
+                fills = bot.client.get_fills(bot.symbol, limit=50)
+                if isinstance(fills, list):
+                    exchange_fills_list = [{
+                        "id": str(f.get("id", "")),
+                        "created_at": f.get("created_at", ""),
+                        "side": f.get("side", ""),
+                        "price": str(f.get("fill_price") or f.get("price", "0")),
+                        "size": int(f.get("size") or 0),
+                        "fee": str(f.get("commission") or f.get("fee", "0")),
+                        "role": f.get("role", "taker"),
+                        "symbol": bot.symbol
+                    } for f in fills]
+            except Exception as e:
+                logger.warning(f"Error fetching fills: {e}")
+
+        # Strategy engine state
+        strategy_state = {
+            "position_state": 0,
+            "entry_price": None,
+            "initial_stop_loss": None,
+            "active_trailing_stop": None,
+            "highest_price": None,
+            "lowest_price": None,
+            "contract_value": contract_val
+        }
+        if bot:
+            strategy_state = {
+                "position_state": bot.strategy.position_state,
+                "entry_price": bot.strategy.entry_price,
+                "initial_stop_loss": bot.strategy.initial_stop_loss,
+                "active_trailing_stop": bot.strategy.active_trailing_stop,
+                "highest_price": bot.strategy.highest_price,
+                "lowest_price": bot.strategy.lowest_price,
+                "contract_value": contract_val
+            }
+
+        now_ist = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
+
+        return {
+            # Identity
+            "environment": config.DELTA_ENVIRONMENT.upper(),
+            "symbol": bot.symbol if bot else config.TRADING_SYMBOL,
+            "timeframe": bot.timeframe if bot else config.TIMEFRAME,
+            "leverage": getattr(bot, "leverage", config.LEVERAGE) if bot else config.LEVERAGE,
+            "strategy_name": "21 EMA Cut Breakout",
+            "trailing_ratio": "1:3",
+            # Real data
+            "wallet": wallet_info,
+            "position": pos_info,
+            "strategy": strategy_state,
+            "open_orders": open_orders_list,
+            "exchange_fills": exchange_fills_list[:50],
+            # Computed stats
+            "stats": get_performance_stats(),
+            "risk_guard": rg_status,
+            # Activity logs
+            "recent_logs": recent_standalone_logs[:20],
+            "completed_trades": completed_trades[:50],
+            # Server time
+            "server_time": now_ist.strftime("%Y-%m-%dT%H:%M:%S+05:30")
+        }
+
     def do_GET(self):
         if self.path in ("/", "/dashboard"):
             self.send_response(200)
@@ -273,56 +441,30 @@ class RenderHealthHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(DASHBOARD_HTML.encode("utf-8"))
         elif self.path == "/healthz":
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
+            self._send_json({"status": "ok", "time": datetime.datetime.now(datetime.timezone.utc).isoformat()})
+        elif self.path in ("/api/dashboard", "/api/status"):
+            self._send_json(self._build_dashboard_payload())
+        else:
+            self.send_response(404)
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok", "time": datetime.datetime.now(datetime.timezone.utc).isoformat()}).encode("utf-8"))
-        elif self.path == "/api/status":
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.end_headers()
-            
-            rg_status = risk_guard.get_status() if risk_guard else {}
-            pos_info = {"size": 0, "entry_price": 0.0, "unrealized_pnl": 0.0}
-            wallet_info = {"balance": 0.0, "available_balance": 0.0}
-            
-            if global_bot_instance:
-                try:
-                    pos = global_bot_instance.client.get_position_for_symbol(global_bot_instance.symbol)
-                    if pos:
-                        pos_info = {
-                            "size": float(pos.get("size", 0)),
-                            "entry_price": float(pos.get("entry_price") or 0.0),
-                            "unrealized_pnl": float(pos.get("unrealized_pnl") or 0.0),
-                            "liquidation_price": float(pos.get("liquidation_price") or 0.0)
-                        }
-                    wallets = global_bot_instance.client.get_balances()
-                    for w in wallets:
-                        if w.get("asset_symbol") in ("USDT", "USD"):
-                            wallet_info = {
-                                "balance": float(w.get("balance") or 0.0),
-                                "available_balance": float(w.get("available_balance") or 0.0)
-                            }
-                            break
-                except Exception as e:
-                    logger.warning(f"Error fetching live API status: {e}")
-                    
-            resp_data = {
-                "environment": config.DELTA_ENVIRONMENT.upper(),
-                "symbol": global_bot_instance.symbol if global_bot_instance else config.TRADING_SYMBOL,
-                "timeframe": global_bot_instance.timeframe if global_bot_instance else config.TIMEFRAME,
-                "leverage": getattr(global_bot_instance, "leverage", config.LEVERAGE),
-                "position_state": global_bot_instance.strategy.position_state if global_bot_instance else 0,
-                "entry_price": global_bot_instance.strategy.entry_price if global_bot_instance else None,
-                "active_stop_loss": global_bot_instance.strategy.active_trailing_stop if global_bot_instance else None,
-                "wallet": wallet_info,
-                "position": pos_info,
-                "stats": get_performance_stats(),
-                "risk_guard": rg_status,
-                "recent_logs": recent_standalone_logs[:20],
-                "completed_trades": completed_trades[:50]
-            }
-            self.wfile.write(json.dumps(resp_data).encode("utf-8"))
+
+    def do_POST(self):
+        if self.path == "/api/emergency_close":
+            bot = global_bot_instance
+            if not bot:
+                self._send_json({"success": False, "message": "Bot not initialized"}, 503)
+                return
+            try:
+                logger.warning("[EMERGENCY CLOSE] Manual emergency close triggered from dashboard!")
+                bot.client.close_position(bot.symbol)
+                bot.client.cancel_all_orders(bot.symbol)
+                bot.strategy.reset_state()
+                bot.last_exchange_stop_price = None
+                log_standalone_event("EXIT_LONG", "EmergencyClose(Dashboard)", 0.0)
+                self._send_json({"success": True, "message": "Position closed and orders cancelled"})
+            except Exception as e:
+                logger.error(f"[EMERGENCY CLOSE] Failed: {e}")
+                self._send_json({"success": False, "message": str(e)}, 500)
         else:
             self.send_response(404)
             self.end_headers()
@@ -342,7 +484,7 @@ class StandaloneBot:
     """
     Independent 24/7 background algorithmic runner.
     Fetches live candles from Delta Exchange, computes strategy logic,
-    and executes orders directly with 1:4 trailing profit management.
+    and executes orders directly with 1:3 trailing profit management.
     """
     def __init__(self, symbol: Optional[str] = None, timeframe: Optional[str] = None):
         global global_bot_instance, risk_guard
@@ -404,7 +546,7 @@ class StandaloneBot:
         return df
 
     def sync_exchange_trailing_stop(self, live_price: Optional[float] = None):
-        """Updates the real Stop-Loss order on Delta Exchange as the 1:4 trailing stop moves."""
+        """Updates the real Stop-Loss order on Delta Exchange as the 1:3 trailing stop moves."""
         if self.strategy.position_state == 1 and self.strategy.active_trailing_stop:
             new_sl = round(self.strategy.active_trailing_stop, 2)
             if live_price is not None and new_sl >= (live_price - 0.10):
@@ -527,12 +669,12 @@ class StandaloneBot:
         if df is None or len(df) < 25:
             return
 
-        # 1. REAL-TIME INTRA-CANDLE EXIT & 1:4 TRAILING STOP SYNC
+        # 1. REAL-TIME INTRA-CANDLE EXIT & 1:3 TRAILING STOP SYNC
         if self.strategy.position_state != 0:
             live_price = float(df["close"].iloc[-1])
             rt_signal = self.strategy.check_realtime_exit(live_price)
             if rt_signal and rt_signal.action != "NONE":
-                logger.info(f"[1:4 TRAILING EXIT] {rt_signal.action} -> {rt_signal.reason} (Price: {live_price:.2f})")
+                logger.info(f"[1:3 TRAILING EXIT] {rt_signal.action} -> {rt_signal.reason} (Price: {live_price:.2f})")
                 self.execute_signal(rt_signal)
                 return
             else:

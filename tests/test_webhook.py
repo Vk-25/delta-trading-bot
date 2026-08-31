@@ -12,7 +12,7 @@ class TestWebhookServer(unittest.TestCase):
     def test_root_and_health(self):
         res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
-        self.assertIn("DeltaBot Live Dashboard", res.text)
+        self.assertIn("DeltaBot Dashboard", res.text)
         
         health_res = self.client.get("/health")
         self.assertEqual(health_res.status_code, 200)
@@ -101,11 +101,10 @@ class TestWebhookServer(unittest.TestCase):
     def test_dashboard_contains_updated_fee_and_functions(self):
         res = self.client.get("/")
         self.assertEqual(res.status_code, 200)
-        self.assertIn("0.05% Taker", res.text)
-        self.assertIn("function formatPnl", res.text)
-        self.assertIn("function formatFee", res.text)
+        self.assertIn("function formatUSD", res.text)
+        self.assertIn("function formatINR", res.text)
         self.assertIn("function formatPrice", res.text)
-        self.assertIn("function formatInr", res.text)
+        self.assertIn("/api/dashboard", res.text)
 
 if __name__ == "__main__":
     unittest.main()
