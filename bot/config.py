@@ -30,11 +30,13 @@ class BotConfig:
     
     # Dynamic Symbol Leverage & Lot Sizing Profiles
     # ETHUSD: 130x leverage, 1 lot
-    # XAUTUSD / XAUUSD: 60x leverage, 1-3 lots (default 1 lot)
+    # XAUTUSD / XAUUSD / XAUUSDT: 60x leverage, 1-3 lots (default 1 lot)
     SYMBOL_PROFILES: Dict[str, Dict[str, Any]] = {
         "ETHUSD": {"leverage": 130, "order_size": 1},
         "XAUTUSD": {"leverage": 60, "order_size": int(os.getenv("XAUT_ORDER_SIZE", "1"))},
         "XAUUSD": {"leverage": 60, "order_size": int(os.getenv("XAUT_ORDER_SIZE", "1"))},
+        "XAUUSDT": {"leverage": 60, "order_size": int(os.getenv("XAUT_ORDER_SIZE", "1"))},
+        "XAUTUSDT": {"leverage": 60, "order_size": int(os.getenv("XAUT_ORDER_SIZE", "1"))},
         "BTCUSD": {"leverage": 100, "order_size": 1},
     }
 
